@@ -1250,6 +1250,1120 @@ Reactive подписки для автоматического обновлен
 
 Слабая связанность компонентов.
 
+---
+
+# ЧАСТЬ 2: ПОШАГОВОЕ ВНЕДРЕНИЕ ФИЧ
+
+## Обзор всех фич в RTS Demo
+
+RTS Demo содержит **12 основных фич**, организованных по уровню сложности.
+
+### Классификация по уровням
+
+#### Уровень 1 (⭐): Foundation - Базовые данные
+
+1. **Transform System** - Reactive позиция/ротация
+2. **Team System** - Команды юнитов
+3. **Health System** - Система жизни
+
+#### Уровень 2 (⭐⭐): Core Mechanics - Основная механика
+
+4. **Movement System** - Движение с Request паттерном
+5. **Rotation System** - Поворот к направлению
+
+#### Уровень 3 (⭐⭐⭐): Advanced Mechanics - Продвинутая механика
+
+6. **Melee Combat System** - Ближний бой
+7. **Range Combat System** - Дальний бой с снарядами
+8. **AI System** - Двухкомпонентная AI (Detect + Attack)
+9. **View System** - Model-View separation с Reactive
+
+#### Уровень 4 (⭐⭐⭐⭐): Architecture Patterns - Архитектурные паттерны
+
+10. **Factory Pattern** - Создание юнитов из переиспользуемых Installers
+11. **EntityFilter Pattern** - Динамические выборки
+12. **Object Pooling + EntityWorld** - Масштабирование до 10000+ юнитов
+
+### Граф зависимостей фич
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    Level 1: Foundation                      │
+│  [Transform (Reactive)] [Team] [Health]                    │
+└──────────────┬──────────────────────────────────────────────┘
+               │
+               ▼
+┌─────────────────────────────────────────────────────────────┐
+│                   Level 2: Core Mechanics                   │
+│  [Movement (Request)] [Rotation]                           │
+│  depends on: Transform                                      │
+└──────────────┬──────────────────────────────────────────────┘
+               │
+               ▼
+┌─────────────────────────────────────────────────────────────┐
+│                Level 3: Advanced Mechanics                  │
+│  [MeleeCombat] [RangeCombat] [AI] [View]                  │
+│  depends on: All Level 1+2                                  │
+└──────────────┬──────────────────────────────────────────────┘
+               │
+               ▼
+┌─────────────────────────────────────────────────────────────┐
+│              Level 4: Architecture Patterns                 │
+│  [Factory] [EntityFilter] [Pooling+World]                  │
+│  depends on: All Level 1+2+3                                │
+└─────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## Feature 1: Reactive Transform System (⭐)
+
+**Сложность:** Foundation
+**Зависимости:** Нет
+**Используется в:** Movement, View, AI
+
+### Описание
+
+В RTS Demo Transform использует **ReactiveVariable** вместо InlineVariable для автоматического обновления View при изменении позиции/ротации.
+
+### Шаг 1: Добавление в EntityAPI
+
+```csharp
+public static class UnitEntityAPI
+{
+    public static readonly int Position;  // IReactiveVariable<Vector3>
+    public static readonly int Rotation;  // IReactiveVariable<Quaternion>
+    public static readonly int Scale;     // IValue<float>
+
+    public static IReactiveVariable<Vector3> GetPosition(this IUnitEntity entity)
+        => entity.GetValue<IReactiveVariable<Vector3>>(Position);
+
+    public static void AddPosition(this IUnitEntity entity, IReactiveVariable<Vector3> value)
+        => entity.AddValue(Position, value);
+
+    public static IReactiveVariable<Quaternion> GetRotation(this IUnitEntity entity)
+        => entity.GetValue<IReactiveVariable<Quaternion>>(Rotation);
+
+    public static void AddRotation(this IUnitEntity entity, IReactiveVariable<Quaternion> value)
+        => entity.AddValue(Rotation, value);
+
+    public static IValue<float> GetScale(this IUnitEntity entity)
+        => entity.GetValue<IValue<float>>(Scale);
+
+    public static void AddScale(this IUnitEntity entity, IValue<float> value)
+        => entity.AddValue(Scale, value);
+}
+```
+
+**Принцип:** Reactive для автоматического обновления View
+
+### Шаг 2: Создание Data Classes
+
+```csharp
+// ReactiveVector3 - реактивная позиция
+public sealed class ReactiveVector3 : IReactiveVariable<Vector3>
+{
+    private Vector3 _value;
+    private event Action<Vector3> _onChange;
+
+    public ReactiveVector3() : this(Vector3.zero) { }
+
+    public ReactiveVector3(Vector3 initialValue)
+    {
+        _value = initialValue;
+    }
+
+    public Vector3 Value
+    {
+        get => _value;
+        set
+        {
+            if (_value != value)
+            {
+                _value = value;
+                _onChange?.Invoke(_value);  // Автоматическое уведомление
+            }
+        }
+    }
+
+    public void Observe(Action<Vector3> callback)
+    {
+        _onChange += callback;
+        callback?.Invoke(_value);  // Immediate call
+    }
+
+    public void Unsubscribe(Action<Vector3> callback)
+    {
+        _onChange -= callback;
+    }
+}
+
+// ReactiveQuaternion - реактивная ротация
+public sealed class ReactiveQuaternion : IReactiveVariable<Quaternion>
+{
+    private Quaternion _value;
+    private event Action<Quaternion> _onChange;
+
+    public ReactiveQuaternion() : this(Quaternion.identity) { }
+
+    public ReactiveQuaternion(Quaternion initialValue)
+    {
+        _value = initialValue;
+    }
+
+    public Quaternion Value
+    {
+        get => _value;
+        set
+        {
+            if (_value != value)
+            {
+                _value = value;
+                _onChange?.Invoke(_value);
+            }
+        }
+    }
+
+    public void Observe(Action<Quaternion> callback)
+    {
+        _onChange += callback;
+        callback?.Invoke(_value);
+    }
+
+    public void Unsubscribe(Action<Quaternion> callback)
+    {
+        _onChange -= callback;
+    }
+}
+```
+
+**Отличие от Shooter:** Reactive вместо InlineVariable для Model-View separation
+
+### Шаг 3: Создание UseCases
+
+```csharp
+public static class TransformUseCase
+{
+    // Расчет вектора между двумя юнитами
+    public static Vector3 GetVector(IUnitEntity from, IUnitEntity to)
+    {
+        Vector3 fromPos = from.GetPosition().Value;
+        Vector3 toPos = to.GetPosition().Value;
+        return toPos - fromPos;
+    }
+
+    // Расчет дистанции
+    public static float GetDistance(IUnitEntity from, IUnitEntity to)
+    {
+        Vector3 vector = GetVector(from, to);
+        return vector.magnitude;
+    }
+
+    // Расчет направления
+    public static Vector3 GetDirection(IUnitEntity from, IUnitEntity to)
+    {
+        Vector3 vector = GetVector(from, to);
+        return vector.normalized;
+    }
+}
+```
+
+### Шаг 4: Создание Behaviours
+
+Transform не требует отдельных Behaviours - другие системы изменяют его напрямую.
+
+**Пример использования в Movement:**
+
+```csharp
+[BurstCompile]
+public static class MoveUseCase
+{
+    public static void MoveStep(IUnitEntity entity, Vector3 direction, float deltaTime)
+    {
+        IReactiveVariable<Vector3> position = entity.GetPosition();
+        MoveStep(
+            position.Value,
+            direction,
+            entity.GetMoveSpeed().Value,
+            deltaTime,
+            out float3 next
+        );
+        position.Value = next;  // Автоматически уведомит View
+    }
+
+    [BurstCompile]
+    public static void MoveStep(
+        in float3 position,
+        in float3 direction,
+        in float speed,
+        in float deltaTime,
+        out float3 result
+    ) => result = position + speed * deltaTime * direction;
+}
+```
+
+### Шаг 5: Создание Installer
+
+```csharp
+[Serializable]
+public sealed class TransformEntityInstaller : IEntityInstaller<IUnitEntity>
+{
+    [SerializeField] private Const<float> _scale = 1;
+
+    public void Install(IUnitEntity entity)
+    {
+        // Reactive для автоматического обновления View
+        entity.AddPosition(new ReactiveVector3());
+        entity.AddRotation(new ReactiveQuaternion());
+        entity.AddScale(_scale);
+
+#if UNITY_EDITOR
+        entity.AddBehaviour<TransformGizmos>();  // Debug визуализация
+#endif
+    }
+}
+```
+
+### Шаг 6: Интеграция с другими фичами
+
+**View System (автоматическое обновление):**
+
+```csharp
+[Serializable]
+public sealed class PositionViewBehaviour : IEntityInit<IUnitEntity>, IEntityDispose
+{
+    [SerializeField] private Transform _transform;
+    private IReactiveValue<Vector3> _position;
+
+    public void Init(IUnitEntity entity)
+    {
+        _position = entity.GetPosition();
+        // Подписка на изменения - автоматическая синхронизация
+        _position.Observe(this.OnPositionChanged);
+    }
+
+    public void Dispose(IEntity entity)
+    {
+        _position.Unsubscribe(this.OnPositionChanged);
+    }
+
+    private void OnPositionChanged(Vector3 position)
+    {
+        _transform.position = position;  // Unity Transform синхронизируется автоматически
+    }
+}
+```
+
+**AI System (чтение позиции):**
+
+```csharp
+public void FixedTick(IEntity entity, float deltaTime)
+{
+    Vector3 vector = TransformUseCase.GetVector(_entity, target);
+    float distance = vector.magnitude;
+
+    if (distance > fullDistance)
+        _entity.GetMoveRequest().Invoke(vector.normalized);
+}
+```
+
+### Шаг 7: Best Practices и зависимости
+
+**Зависимости:**
+- 📦 Atomic.Elements (IReactiveVariable, ReactiveVariable)
+- 📦 Unity.Mathematics (для Burst в UseCases)
+
+**Best Practices:**
+
+1. ✅ **ReactiveVariable для Model-View separation**
+   ```csharp
+   entity.AddPosition(new ReactiveVector3());  // НЕ InlineVariable
+   ```
+
+2. ✅ **Burst Compilation для трансформаций**
+   ```csharp
+   [BurstCompile]
+   public static void MoveStep(in float3 position, in float3 direction, ...)
+   {
+       result = position + speed * deltaTime * direction;
+   }
+   ```
+
+3. ✅ **Unity.Mathematics типы в Burst методах**
+   ```csharp
+   // float3 вместо Vector3
+   // quaternion вместо Quaternion
+   ```
+
+4. ✅ **Подписка View на Reactive переменные**
+   ```csharp
+   _position.Observe(this.OnPositionChanged);
+   // Автоматическое обновление при изменении
+   ```
+
+5. ⚠️ **ВСЕГДА отписывайтесь в Dispose**
+   ```csharp
+   public void Dispose(IEntity entity)
+   {
+       _position.Unsubscribe(this.OnPositionChanged);
+   }
+   ```
+
+**Типичные ошибки:**
+
+❌ **Ошибка 1:** InlineVariable вместо ReactiveVariable
+```csharp
+// НЕПРАВИЛЬНО - View не будет обновляться
+entity.AddPosition(new TransformPositionVariable(transform));
+```
+
+✅ **Исправление:**
+```csharp
+// ПРАВИЛЬНО
+entity.AddPosition(new ReactiveVector3());
+```
+
+❌ **Ошибка 2:** Vector3 в Burst методах
+```csharp
+// НЕПРАВИЛЬНО - не совместимо с Burst
+[BurstCompile]
+public static void MoveStep(Vector3 position, ...) { }
+```
+
+✅ **Исправление:**
+```csharp
+// ПРАВИЛЬНО
+[BurstCompile]
+public static void MoveStep(in float3 position, ...) { }
+```
+
+---
+
+## Feature 2: Request Pattern для Movement (⭐⭐)
+
+**Сложность:** Core Mechanics
+**Зависимости:** Transform
+**Используется в:** Movement, AI
+
+### Описание
+
+Request Pattern обеспечивает **однократное потребление** команды движения. В отличие от ReactiveVariable, Request вызывается один раз и потребляется.
+
+### Шаг 1: Добавление в EntityAPI
+
+```csharp
+public static class UnitEntityAPI
+{
+    public static readonly int MoveRequest;    // Request<Vector3>
+    public static readonly int MoveEvent;      // IEvent<Vector3>
+    public static readonly int MoveSpeed;      // IValue<float>
+    public static readonly int RotationSpeed;  // IValue<float>
+    public static readonly int Moveable;       // Tag
+
+    public static Request<Vector3> GetMoveRequest(this IUnitEntity entity)
+        => entity.GetValue<Request<Vector3>>(MoveRequest);
+
+    public static void AddMoveRequest(this IUnitEntity entity, Request<Vector3> value)
+        => entity.AddValue(MoveRequest, value);
+
+    public static IEvent<Vector3> GetMoveEvent(this IUnitEntity entity)
+        => entity.GetValue<IEvent<Vector3>>(MoveEvent);
+
+    public static void AddMoveEvent(this IUnitEntity entity, IEvent<Vector3> value)
+        => entity.AddValue(MoveEvent, value);
+
+    public static IValue<float> GetMoveSpeed(this IUnitEntity entity)
+        => entity.GetValue<IValue<float>>(MoveSpeed);
+
+    public static void AddMoveSpeed(this IUnitEntity entity, IValue<float> value)
+        => entity.AddValue(MoveSpeed, value);
+
+    public static bool HasMoveableTag(this IUnitEntity entity)
+        => entity.HasTag(Moveable);
+
+    public static bool AddMoveableTag(this IUnitEntity entity)
+        => entity.AddTag(Moveable);
+}
+```
+
+### Шаг 2: Создание Data Classes
+
+```csharp
+// Request - однократное потребляемое действие
+public sealed class Request<T>
+{
+    private T _value;
+    private bool _isPending;
+
+    // Вызвать запрос
+    public void Invoke(T value)
+    {
+        _value = value;
+        _isPending = true;
+    }
+
+    // Попытаться получить и потребить запрос
+    public bool Consume(out T value)
+    {
+        if (_isPending)
+        {
+            value = _value;
+            _isPending = false;
+            _value = default;
+            return true;
+        }
+
+        value = default;
+        return false;
+    }
+
+    // Проверить, есть ли запрос
+    public bool IsPending() => _isPending;
+
+    // Отменить запрос
+    public void Cancel()
+    {
+        _isPending = false;
+        _value = default;
+    }
+}
+```
+
+**Отличие от Event:** Request потребляется один раз, Event может иметь множество подписчиков
+
+### Шаг 3: Создание UseCases
+
+```csharp
+[BurstCompile]
+public static class MoveUseCase
+{
+    // Главная функция движения
+    public static void MoveStep(IUnitEntity entity, Vector3 direction, float deltaTime)
+    {
+        IReactiveVariable<Vector3> position = entity.GetPosition();
+        MoveStep(
+            position.Value,
+            direction,
+            entity.GetMoveSpeed().Value,
+            deltaTime,
+            out float3 next
+        );
+        position.Value = next;
+    }
+
+    // Burst-compiled версия
+    [BurstCompile]
+    public static void MoveStep(
+        in float3 position,
+        in float3 direction,
+        in float speed,
+        in float deltaTime,
+        out float3 result
+    ) => result = position + speed * deltaTime * direction;
+}
+
+[BurstCompile]
+public static class RotateUseCase
+{
+    public static void RotateStep(IUnitEntity entity, Vector3 direction, float deltaTime)
+    {
+        IReactiveVariable<Quaternion> rotation = entity.GetRotation();
+        RotateStep(
+            rotation.Value,
+            direction,
+            entity.GetRotationSpeed().Value,
+            deltaTime,
+            out quaternion next
+        );
+        rotation.Value = next;
+    }
+
+    [BurstCompile]
+    public static void RotateStep(
+        in quaternion current,
+        in float3 direction,
+        in float speedDeg,
+        in float deltaTime,
+        out quaternion result)
+    {
+        // Проверка нулевого вектора
+        if (math.lengthsq(direction) < 1e-4f)
+        {
+            result = current;
+            return;
+        }
+
+        // Целевая ротация
+        quaternion target = quaternion.LookRotation(math.normalize(direction), math.up());
+
+        // Расчет угла
+        Angle(in current, in target, out float angle);
+
+        // Плавный поворот
+        float maxStep = speedDeg * deltaTime;
+        if (angle <= maxStep)
+            result = target;
+        else
+        {
+            float t = maxStep / angle;
+            result = math.slerp(current, target, t);
+        }
+    }
+
+    [BurstCompile]
+    private static void Angle(in quaternion a, in quaternion b, out float result)
+    {
+        float dot = math.dot(a.value, b.value);
+        result = math.degrees(2 * math.acos(math.abs(dot)));
+    }
+}
+```
+
+### Шаг 4: Создание Behaviours
+
+Movement использует **Inline Behaviour** через WhenFixedTick:
+
+```csharp
+// В MoveEntityInstaller
+entity.WhenFixedTick(deltaTime =>
+{
+    // Проверка: жив ли юнит
+    if (!LifeUseCase.IsAlive(entity))
+        return;
+
+    // Попытка потребить Request
+    if (entity.GetMoveRequest().Consume(out Vector3 direction) &&
+        direction != Vector3.zero)
+    {
+        // Движение
+        MoveUseCase.MoveStep(entity, direction, deltaTime);
+
+        // Поворот
+        RotateUseCase.RotateStep(entity, direction, deltaTime);
+
+        // Событие движения
+        entity.GetMoveEvent().Invoke(direction);
+    }
+});
+```
+
+**Преимущество Inline Behaviour:**
+- ✅ Нет отдельного класса
+- ✅ Логика рядом с данными
+- ✅ Легко читается
+
+### Шаг 5: Создание Installer
+
+```csharp
+[Serializable]
+public sealed class MoveEntityInstaller : IEntityInstaller<IUnitEntity>
+{
+    [SerializeField] private Const<float> _moveSpeed = 3;
+    [SerializeField] private Const<float> _rotationSpeed = 12;
+
+    public void Install(IUnitEntity entity)
+    {
+        entity.AddMoveableTag();
+        entity.AddMoveSpeed(_moveSpeed);
+        entity.AddRotationSpeed(_rotationSpeed);
+        entity.AddMoveRequest(new Request<Vector3>());
+        entity.AddMoveEvent(new Event<Vector3>());
+
+        // Inline Behaviour для движения
+        entity.WhenFixedTick(deltaTime =>
+        {
+            if (LifeUseCase.IsAlive(entity) &&
+                entity.GetMoveRequest().Consume(out Vector3 direction) &&
+                direction != Vector3.zero)
+            {
+                MoveUseCase.MoveStep(entity, direction, deltaTime);
+                RotateUseCase.RotateStep(entity, direction, deltaTime);
+                entity.GetMoveEvent().Invoke(direction);
+            }
+        });
+    }
+}
+```
+
+### Шаг 6: Интеграция с другими фичами
+
+**AI System (Producer - вызывает Request):**
+
+```csharp
+public sealed class AIAttackTargetBehaviour : IEntityFixedTick
+{
+    public void FixedTick(IEntity entity, float deltaTime)
+    {
+        IUnitEntity target = _target.Value;
+        if (target == null || !LifeUseCase.IsAlive(target))
+            return;
+
+        Vector3 vector = TransformUseCase.GetVector(_entity, target);
+        float distance = vector.magnitude;
+
+        if (distance > fullDistance)
+        {
+            // PRODUCER: вызывает Request
+            _entity.GetMoveRequest().Invoke(vector.normalized);
+        }
+        else
+        {
+            _entity.GetFireRequest().Invoke(target);
+        }
+    }
+}
+```
+
+**MoveEntityInstaller (Consumer - потребляет Request):**
+
+```csharp
+// CONSUMER: потребляет Request в WhenFixedTick
+entity.WhenFixedTick(deltaTime =>
+{
+    if (entity.GetMoveRequest().Consume(out Vector3 direction))
+    {
+        // Выполнить движение
+        MoveUseCase.MoveStep(entity, direction, deltaTime);
+    }
+});
+```
+
+### Шаг 7: Best Practices и зависимости
+
+**Зависимости:**
+- 📦 Transform System (Position, Rotation)
+- 📦 Life System (для проверки IsAlive)
+- 📦 Unity.Mathematics (для Burst)
+- 📦 Unity.Burst
+
+**Best Practices:**
+
+1. ✅ **Request для однократных команд**
+   ```csharp
+   entity.GetMoveRequest().Invoke(direction);  // Вызов
+   if (entity.GetMoveRequest().Consume(out Vector3 dir))  // Потребление
+   {
+       // Выполнить
+   }
+   ```
+
+2. ✅ **Event для множественных подписчиков**
+   ```csharp
+   entity.GetMoveEvent().Subscribe(OnMove);  // Подписка
+   entity.GetMoveEvent().Invoke(direction);  // Вызов для всех
+   ```
+
+3. ✅ **WhenFixedTick для Inline Behaviours**
+   ```csharp
+   entity.WhenFixedTick(deltaTime =>
+   {
+       // Логика движения
+   });
+   ```
+
+4. ✅ **Burst Compilation для математики**
+   ```csharp
+   [BurstCompile]
+   public static void MoveStep(in float3 position, ...) { }
+   ```
+
+5. ✅ **Проверка IsAlive перед движением**
+   ```csharp
+   if (LifeUseCase.IsAlive(entity) && entity.GetMoveRequest().Consume(...))
+   {
+       // Двигаться
+   }
+   ```
+
+**Типичные ошибки:**
+
+❌ **Ошибка 1:** Event вместо Request
+```csharp
+// НЕПРАВИЛЬНО - будет вызываться многократно
+entity.GetMoveEvent().Invoke(direction);
+```
+
+✅ **Исправление:**
+```csharp
+// ПРАВИЛЬНО - однократное потребление
+entity.GetMoveRequest().Invoke(direction);
+```
+
+❌ **Ошибка 2:** Забыли потребить Request
+```csharp
+// НЕПРАВИЛЬНО - Request не потребляется
+Vector3 direction = entity.GetMoveRequest()._value;
+```
+
+✅ **Исправление:**
+```csharp
+// ПРАВИЛЬНО
+if (entity.GetMoveRequest().Consume(out Vector3 direction))
+{
+    // Использовать direction
+}
+```
+
+---
+
+## Feature 3: AI System - Двухкомпонентная архитектура (⭐⭐⭐)
+
+**Сложность:** Advanced Mechanics
+**Зависимости:** Transform, Movement, Combat, Life, EntityFilter
+**Используется в:** Warrior, Tank
+
+### Описание
+
+AI System разделена на два компонента:
+- **AIDetectTargetBehaviour** - периодически ищет ближайшего врага
+- **AIAttackTargetBehaviour** - атакует выбранную цель
+
+### Шаг 1: Добавление в EntityAPI
+
+```csharp
+public static class UnitEntityAPI
+{
+    public static readonly int Target;         // IVariable<IUnitEntity>
+    public static readonly int Targeted;       // Tag (помечает, что юнит уже чья-то цель)
+
+    public static IVariable<IUnitEntity> GetTarget(this IUnitEntity entity)
+        => entity.GetValue<IVariable<IUnitEntity>>(Target);
+
+    public static void AddTarget(this IUnitEntity entity, IVariable<IUnitEntity> value)
+        => entity.AddValue(Target, value);
+
+    public static bool HasTargetedTag(this IUnitEntity entity)
+        => entity.HasTag(Targeted);
+
+    public static bool AddTargetedTag(this IUnitEntity entity)
+        => entity.AddTag(Targeted);
+
+    public static bool DelTargetedTag(this IUnitEntity entity)
+        => entity.DelTag(Targeted);
+}
+```
+
+### Шаг 2: Создание Data Classes
+
+```csharp
+// RandomCooldown - рандомная задержка между поисками
+public sealed class RandomCooldown : ICooldown
+{
+    private readonly float _min;
+    private readonly float _max;
+    private float _duration;
+    private float _currentTime;
+
+    public RandomCooldown(float min, float max)
+    {
+        _min = min;
+        _max = max;
+        _duration = Random.Range(min, max);
+        _currentTime = _duration;
+    }
+
+    public bool IsCompleted() => _currentTime >= _duration;
+
+    public void ResetTime()
+    {
+        _duration = Random.Range(_min, _max);  // Новая случайная задержка
+        _currentTime = 0;
+    }
+
+    public void Tick(float deltaTime)
+    {
+        if (_currentTime < _duration)
+            _currentTime += deltaTime;
+    }
+}
+```
+
+### Шаг 3: Создание UseCases
+
+```csharp
+public static class UnitsUseCase
+{
+    // Поиск ближайшего свободного врага
+    public static IUnitEntity FindFreeEnemyFor(IGameContext context, IUnitEntity entity)
+    {
+        IPlayerContext playerContext = PlayersUseCase.GetPlayerFor(context, entity);
+        EntityFilter<IUnitEntity> enemyFilter = playerContext.GetFreeEnemyFilter();
+        Vector3 center = entity.GetPosition().Value;
+        return FindClosest(enemyFilter, center);
+    }
+
+    // Поиск ближайшего юнита из фильтра
+    public static IUnitEntity FindClosest(EntityFilter<IUnitEntity> entities, Vector3 center)
+    {
+        IUnitEntity result = null;
+        float minDistance = float.MaxValue;
+
+        foreach (IUnitEntity entity in entities)
+        {
+            Vector3 position = entity.GetPosition().Value;
+            float distance = Vector3.SqrMagnitude(position - center);  // sqrMagnitude быстрее
+            if (distance < minDistance)
+            {
+                result = entity;
+                minDistance = distance;
+            }
+        }
+
+        return result;
+    }
+}
+
+// UseCase для работы с командами
+public static class TeamUseCase
+{
+    // Проверка, является ли юнит свободным врагом
+    public static bool IsFreeEnemyUnit(IPlayerContext context, IUnitEntity target) =>
+        !target.HasTargetedTag() &&           // Не занят другим юнитом
+        target.HasUnitTag() &&                // Это юнит (не снаряд)
+        target.GetTeam().Value != context.GetTeam().Value;  // Вражеская команда
+}
+```
+
+### Шаг 4: Создание Behaviours
+
+```csharp
+// AIDetectTargetBehaviour - поиск целей
+public sealed class AIDetectTargetBehaviour :
+    IEntityInit<IUnitEntity>, IEntityFixedTick, IEntityDisable
+{
+    private readonly IGameContext _gameContext;
+    private readonly ICooldown _cooldown;
+    private IEntityWorld<IUnitEntity> _entityWorld;
+    private IVariable<IUnitEntity> _target;
+    private IUnitEntity _entity;
+
+    public AIDetectTargetBehaviour(ICooldown cooldown, IGameContext gameContext)
+    {
+        _cooldown = cooldown;
+        _gameContext = gameContext;
+    }
+
+    public void Init(IUnitEntity entity)
+    {
+        _entity = entity;
+        _target = entity.GetTarget();
+        _entityWorld = _gameContext.GetEntityWorld();
+    }
+
+    public void FixedTick(IEntity entity, float deltaTime)
+    {
+        _cooldown.Tick(deltaTime);
+
+        // Периодически ищем новую цель, если текущая недоступна
+        if (_cooldown.IsCompleted() && !_entityWorld.Contains(_target.Value))
+        {
+            this.AssignTarget();
+            _cooldown.ResetTime();
+        }
+    }
+
+    private void AssignTarget()
+    {
+        // Найти ближайшего свободного врага
+        IUnitEntity enemy = UnitsUseCase.FindFreeEnemyFor(_gameContext, _entity);
+
+        if (enemy != null)
+            enemy.AddTargetedTag();  // Помечаем как занятого
+
+        _target.Value = enemy;
+    }
+
+    public void Disable(IEntity entity)
+    {
+        // Снимаем метку Targeted при отключении
+        IUnitEntity target = _target.Value;
+        if (target != null)
+            target.DelTargetedTag();
+    }
+}
+
+// AIAttackTargetBehaviour - атака цели
+public sealed class AIAttackTargetBehaviour : IEntityInit<IUnitEntity>, IEntityFixedTick
+{
+    private IUnitEntity _entity;
+    private IValue<IUnitEntity> _target;
+    private IValue<float> _scale;
+    private IValue<float> _fireDistance;
+
+    public void Init(IUnitEntity entity)
+    {
+        _entity = entity;
+        _scale = entity.GetScale();
+        _target = entity.GetTarget();
+        _fireDistance = entity.GetFireDistance();
+    }
+
+    public void FixedTick(IEntity entity, float deltaTime)
+    {
+        IUnitEntity target = _target.Value;
+
+        // Проверка валидности цели
+        if (target is not {Enabled: true} || !LifeUseCase.IsAlive(target))
+            return;
+
+        // Расчет вектора и дистанции
+        Vector3 vector = TransformUseCase.GetVector(_entity, target);
+        float fullDistance = _fireDistance.Value + _scale.Value + target.GetScale().Value;
+
+        // Если далеко — двигаемся, если близко — стреляем
+        if (vector.magnitude > fullDistance)
+        {
+            _entity.GetMoveRequest().Invoke(vector.normalized);  // REQUEST: двигаться
+        }
+        else
+        {
+            _entity.GetFireRequest().Invoke(target);             // REQUEST: стрелять
+        }
+    }
+}
+```
+
+### Шаг 5: Создание Installer
+
+```csharp
+[Serializable]
+public sealed class AIEntityInstaller : IEntityInstaller<IUnitEntity>
+{
+    [SerializeField] private float _minDetectDuration = 0.2f;
+    [SerializeField] private float _maxDetectDuration = 0.3f;
+
+    public void Install(IUnitEntity entity)
+    {
+        IGameContext gameContext = GameContext.Instance;
+
+        // Добавление целевой переменной
+        entity.AddTarget(new ReactiveVariable<IUnitEntity>());
+
+        // Два behaviour для AI
+        entity.AddBehaviour(new AIDetectTargetBehaviour(
+            new RandomCooldown(_minDetectDuration, _maxDetectDuration),
+            gameContext
+        ));
+        entity.AddBehaviour<AIAttackTargetBehaviour>();
+    }
+}
+```
+
+### Шаг 6: Интеграция с другими фичами
+
+**EntityFilter (для поиска врагов):**
+
+```csharp
+// В PlayerContextBuilder
+private EntityFilter<IUnitEntity> CreateFreeEnemyFilter(IPlayerContext playerContext) =>
+    new(
+        _entityWorld,                          // Источник entities
+        entity => TeamUseCase.IsFreeEnemyUnit(playerContext, entity),  // Условие
+        new TeamEntityTrigger(),               // Обновление при смене команды
+        new TagEntityTrigger<IUnitEntity>()    // Обновление при изменении тегов
+    );
+```
+
+**Movement System (получает Request от AI):**
+
+```csharp
+entity.WhenFixedTick(deltaTime =>
+{
+    if (entity.GetMoveRequest().Consume(out Vector3 direction))
+    {
+        MoveUseCase.MoveStep(entity, direction, deltaTime);
+    }
+});
+```
+
+**Combat System (получает Request от AI):**
+
+```csharp
+entity.WhenFixedTick(_ =>
+{
+    if (entity.GetFireRequest().Consume(out IUnitEntity target))
+    {
+        DamageUseCase.DealDamage(entity, target);
+    }
+});
+```
+
+### Шаг 7: Best Practices и зависимости
+
+**Зависимости:**
+- 📦 EntityFilter (для поиска врагов)
+- 📦 Movement System (MoveRequest)
+- 📦 Combat System (FireRequest)
+- 📦 Transform System (GetVector)
+- 📦 Life System (IsAlive)
+
+**Best Practices:**
+
+1. ✅ **Разделение на Detect и Attack**
+   ```csharp
+   entity.AddBehaviour<AIDetectTargetBehaviour>();  // Поиск
+   entity.AddBehaviour<AIAttackTargetBehaviour>();  // Атака
+   ```
+
+2. ✅ **Targeted Tag для предотвращения фокусировки**
+   ```csharp
+   enemy.AddTargetedTag();  // Помечаем как занятого
+   // Теперь другие юниты не выберут этого врага
+   ```
+
+3. ✅ **RandomCooldown для разнообразия**
+   ```csharp
+   new RandomCooldown(0.2f, 0.3f);  // Каждый юнит ищет с разной частотой
+   ```
+
+4. ✅ **Проверка валидности цели**
+   ```csharp
+   if (target is not {Enabled: true} || !LifeUseCase.IsAlive(target))
+       return;
+   ```
+
+5. ✅ **EntityFilter для эффективного поиска**
+   ```csharp
+   EntityFilter<IUnitEntity> enemyFilter = playerContext.GetFreeEnemyFilter();
+   // Автоматически фильтрует только подходящих врагов
+   ```
+
+**Типичные ошибки:**
+
+❌ **Ошибка 1:** Все юниты атакуют одну цель
+```csharp
+// НЕПРАВИЛЬНО - нет Targeted Tag
+IUnitEntity enemy = FindClosest(...);
+_target.Value = enemy;
+```
+
+✅ **Исправление:**
+```csharp
+// ПРАВИЛЬНО
+IUnitEntity enemy = FindClosest(...);
+if (enemy != null)
+    enemy.AddTargetedTag();  // Помечаем как занятого
+_target.Value = enemy;
+```
+
+❌ **Ошибка 2:** Не снимается Targeted Tag
+```csharp
+// НЕПРАВИЛЬНО - враг останется "занятым" навсегда
+public void Disable(IEntity entity) { }
+```
+
+✅ **Исправление:**
+```csharp
+// ПРАВИЛЬНО
+public void Disable(IEntity entity)
+{
+    if (_target.Value != null)
+        _target.Value.DelTargetedTag();
+}
+```
+
+---
+
 ## Заключение
 
 RTS Demo демонстрирует:
