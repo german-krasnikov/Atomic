@@ -696,13 +696,499 @@ public class HomeDetectBehavior : IEntityInit, IEntityDispose
 }
 ```
 
+## Распределение логики: Installers, Behaviours, UseCases
+
+### Принципы разделения ответственности
+
+#### Installers - Конфигурация и передача зависимостей
+
+**Роль:** Installers отвечают за **композицию** сущностей - добавление компонентов, значений и поведений.
+
+**Что должно быть в Installer:**
+- Добавление тегов для идентификации
+- Добавление данных (Values, Variables)
+- Создание и добавление Behaviours
+- Передача зависимостей через конструкторы или методы
+
+**Пример:**
+```csharp
+public sealed class WeaponInstaller : SceneEntityInstaller
+{
+    [SerializeField] private Const<int> _damage = 10;
+    [SerializeField] private Cooldown _cooldown;
+    [SerializeField] private Transform _firePoint;
+
+    public override void Install(IEntity entity)
+    {
+        // 1. Добавление данных
+        entity.AddDamage(_damage);
+        entity.AddFireCooldown(_cooldown);
+        entity.AddFirePoint(_firePoint);
+
+        // 2. Передача зависимостей через конструктор Behaviour
+        entity.AddBehaviour(new WeaponBehaviour(_cooldown, _firePoint));
+    }
+}
+```
+
+**Модульные Installers для переиспользования:**
+```csharp
+[Serializable]
+public sealed class MovementInstaller : IEntityInstaller<IEntity>
+{
+    [SerializeField] private Const<float> _moveSpeed = 3;
+
+    public void Install(IEntity entity)
+    {
+        entity.AddMovementSpeed(_moveSpeed);
+        entity.AddMovementDirection(new Variable<Vector3>());
+        entity.AddBehaviour<MovementBehaviour>();
+    }
+}
+
+// Использование
+public override void Install(IEntity entity)
+{
+    entity.Install(_movementInstaller);
+    entity.Install(_rotationInstaller);
+}
+```
+
+#### Behaviours - Настройка КОГДА события происходят
+
+**Роль:** Behaviours определяют **когда** и **как** выполняется логика через lifecycle интерфейсы.
+
+**Что должно быть в Behaviour:**
+- Подписка на события (в Init/Enable)
+- Отписка от событий (в Disable/Dispose)
+- Реакция на обновления (Tick, FixedTick, LateTick)
+- Кеширование зависимостей (в Init)
+- Минимальная логика - делегирование в UseCases
+
+**Пример:**
+```csharp
+public sealed class WeaponBehaviour : IEntityInit, IEntityFixedTick
+{
+    private readonly Cooldown _cooldown;
+    private readonly Transform _firePoint;
+    private IEntity _entity;
+
+    // Зависимости через конструктор
+    public WeaponBehaviour(Cooldown cooldown, Transform firePoint)
+    {
+        _cooldown = cooldown;
+        _firePoint = firePoint;
+    }
+
+    public void Init(IEntity entity)
+    {
+        _entity = entity;
+    }
+
+    public void FixedTick(IEntity entity, float deltaTime)
+    {
+        _cooldown.Tick(deltaTime);
+
+        if (Input.GetKeyDown(KeyCode.Space) && _cooldown.IsCompleted())
+        {
+            // Делегирование логики в UseCase
+            WeaponUseCase.Fire(_entity, _firePoint.position);
+            _cooldown.ResetTime();
+        }
+    }
+}
+```
+
+**Inline Behaviours через WhenFixedTick:**
+```csharp
+public override void Install(IEntity entity)
+{
+    entity.AddFireCooldown(new Cooldown(0.5f));
+
+    // Простая логика прямо в Installer
+    entity.WhenFixedTick(deltaTime =>
+    {
+        Cooldown cooldown = entity.GetFireCooldown();
+        cooldown.Tick(deltaTime);
+
+        if (Input.GetKeyDown(KeyCode.Space) && cooldown.IsCompleted())
+        {
+            WeaponUseCase.Fire(entity, transform.position);
+            cooldown.ResetTime();
+        }
+    });
+}
+```
+
+#### UseCases - Основная бизнес-логика
+
+**Роль:** UseCases содержат **процедурную бизнес-логику** для взаимодействия между entities.
+
+**Что должно быть в UseCase:**
+- Статические методы без состояния
+- Чистая бизнес-логика
+- Операции над множеством entities
+- Переиспользуемая логика
+
+**Пример:**
+```csharp
+public static class WeaponUseCase
+{
+    public static void Fire(IEntity weapon, Vector3 position)
+    {
+        // Проверка боеприпасов
+        if (!HasAmmo(weapon))
+            return;
+
+        // Создание пули
+        IEntity bullet = BulletUseCase.Spawn(position, weapon.GetTeam());
+
+        // Уменьшение боеприпасов
+        weapon.GetAmmo().Value--;
+
+        // Вызов события
+        weapon.GetFireEvent().Invoke();
+    }
+
+    public static bool HasAmmo(IEntity weapon)
+    {
+        return weapon.GetAmmo().Value > 0;
+    }
+}
+```
+
+### Когда использовать что?
+
+| Задача | Где реализовать | Почему |
+|--------|----------------|--------|
+| Добавить компоненты | Installer | Композиция сущности |
+| Передать зависимости | Installer → Behaviour constructor | Dependency Injection |
+| Подписаться на события | Behaviour.Init/Enable | Lifecycle management |
+| Обновлять состояние | Behaviour.Tick/FixedTick | Реакция на цикл обновления |
+| Сложная бизнес-логика | UseCase | Переиспользование и тестирование |
+| Взаимодействие entities | UseCase | Процедурное программирование |
+| Простая inline логика | Installer.WhenFixedTick | Для простых случаев |
+
+## Когда выносить компонент как самодостаточный класс
+
+### InlineAction vs Отдельный класс
+
+#### Используй InlineAction когда:
+```csharp
+public override void Install(IEntity entity)
+{
+    entity.AddFireAction(new InlineAction(() =>
+    {
+        // Простая логика в одном месте (5-15 строк)
+        if (_ammo.Value <= 0 || !_cooldown.IsCompleted())
+            return;
+
+        _ammo.Value--;
+        BulletUseCase.Spawn(...);
+        _cooldown.ResetTime();
+    }));
+}
+```
+
+**Критерии:**
+- ✅ Логика простая (5-15 строк)
+- ✅ Не переиспользуется
+- ✅ Специфична для данного installer
+- ✅ Нет сложных зависимостей
+
+#### Создавай отдельный класс когда:
+```csharp
+public sealed class WeaponFireBehaviour : IEntityInit, IEntityFixedTick
+{
+    // Сложная логика
+    // Переиспользуется в нескольких местах
+    // Требует множественных dependencies
+    // Требует lifecycle management
+}
+```
+
+**Критерии:**
+- ✅ Логика сложная (>15 строк)
+- ✅ Переиспользуется в других entities
+- ✅ Требует Init/Dispose
+- ✅ Множественные зависимости
+
+### InlineFunction vs Отдельный класс
+
+#### InlineFunction для простых вычислений:
+```csharp
+entity.AddPosition(new InlineFunction<Vector3>(() => _rigidbody.position));
+entity.AddRotation(new InlineFunction<Quaternion>(() => _rigidbody.rotation));
+```
+
+#### Отдельный класс для сложной логики:
+```csharp
+public sealed class ComplexPositionCalculator : IFunction<Vector3>
+{
+    private readonly Transform _transform;
+    private readonly IValue<Vector3> _offset;
+
+    public ComplexPositionCalculator(Transform transform, IValue<Vector3> offset)
+    {
+        _transform = transform;
+        _offset = offset;
+    }
+
+    public Vector3 Invoke()
+    {
+        // Сложные вычисления с множеством зависимостей
+        return _transform.position + _transform.rotation * _offset.Value;
+    }
+}
+```
+
+### Компонент как изолированный объект
+
+#### Когда выносить компонент как самодостаточный класс:
+
+**Пример: Health как самодостаточный компонент**
+```csharp
+[Serializable]
+public sealed class Health
+{
+    // События
+    public event Action OnHealthEmpty;
+    public event Action<int> OnHealthChanged;
+
+    [SerializeField] private int current;
+    [SerializeField] private int max;
+
+    public Health(int max) : this(max, max) { }
+
+    public bool Reduce(int damage)
+    {
+        if (this.current == 0)
+            return false;
+
+        this.current = Math.Max(0, this.current - damage);
+        this.OnHealthChanged?.Invoke(this.current);
+
+        if (this.current == 0)
+            this.OnHealthEmpty?.Invoke();
+
+        return true;
+    }
+
+    public bool IsEmpty() => this.current == 0;
+    public int GetCurrent() => this.current;
+}
+```
+
+**Использование:**
+```csharp
+// В Installer
+entity.AddHealth(new Health(100));
+
+// В Behaviour
+public void Init(IEntity entity)
+{
+    Health health = entity.GetHealth();
+    health.OnHealthEmpty += OnDeath;
+}
+```
+
+**Критерии для изолированного компонента:**
+- ✅ Самодостаточная логика (Health, Cooldown, Inventory)
+- ✅ Собственные события и состояние
+- ✅ Переиспользуется в разных контекстах
+- ✅ Может быть протестирован изолированно
+- ✅ Сериализуется в Unity Inspector
+
+## Reactive системы и Events
+
+### IReactiveVariable vs IVariable
+
+```csharp
+// Реактивная переменная - оповещает подписчиков об изменениях
+IReactiveVariable<int> money = new ReactiveVariable<int>(100);
+money.Subscribe(newValue => Debug.Log($"Money changed: {newValue}"));
+money.Value = 150; // Триггерит событие
+
+// Обычная переменная - без оповещений
+IVariable<int> silent = new Variable<int>(100);
+silent.Value = 150; // Без событий
+```
+
+### Event vs Action
+
+**Event (IEvent/ISignal)** - множественные подписчики:
+```csharp
+// Определение
+entity.AddFireEvent(new Event());
+
+// Множественные подписки
+entity.GetFireEvent().Subscribe(OnFire1);
+entity.GetFireEvent().Subscribe(OnFire2);
+entity.GetFireEvent().Subscribe(OnFire3);
+
+// Вызов оповещает всех
+entity.GetFireEvent().Invoke();
+```
+
+**Action (IAction)** - однократное выполнение:
+```csharp
+// Определение
+entity.AddFireAction(new InlineAction(() => {
+    // Выполняется немедленно
+    BulletUseCase.Spawn(...);
+}));
+
+// Вызов
+entity.GetFireAction().Invoke();
+```
+
+### Request vs Action
+
+**Request** - отложенное однократное потребление:
+```csharp
+// Producer (Update)
+public void Tick(IEntity entity, float deltaTime)
+{
+    float dx = Input.GetAxis("Horizontal");
+    entity.GetMoveRequest().Invoke(new Vector3(dx, 0, 0));
+}
+
+// Consumer (FixedUpdate)
+public void FixedTick(IEntity entity, float deltaTime)
+{
+    if (entity.GetMoveRequest().Consume(out Vector3 direction))
+    {
+        // Потребляется один раз
+        MoveUseCase.Move(entity, direction, deltaTime);
+    }
+}
+```
+
+**Action** - немедленное выполнение:
+```csharp
+entity.GetFireAction().Invoke(); // Выполняется сразу
+```
+
+**Когда использовать:**
+- **Request** - для input/AI (Producer-Consumer pattern)
+- **Event** - для оповещений множественных подписчиков
+- **Action** - для немедленного выполнения
+
+## Дополнительные Best Practices
+
+### 1. Использование Optional для опциональных зависимостей
+
+```csharp
+public sealed class WeaponInstaller : SceneEntityInstaller
+{
+    [SerializeField] private Optional<ReactiveInt> _ammo;
+    [SerializeField] private Optional<Cooldown> _cooldown;
+
+    public override void Install(IEntity entity)
+    {
+        // Добавляем только если active в Inspector
+        if (_ammo) entity.AddAmmo(_ammo);
+        if (_cooldown) entity.AddCooldown(_cooldown);
+    }
+}
+```
+
+### 2. DisposableComposite для управления подписками
+
+```csharp
+public sealed class WeaponViewInstaller : SceneEntityInstaller
+{
+    private readonly DisposableComposite _disposables = new();
+
+    public override void Install(IEntity entity)
+    {
+        ISignal fireEvent = entity.GetFireEvent();
+        fireEvent.Subscribe(_fireVFX.Play).AddTo(_disposables);
+        fireEvent.Subscribe(_fireSFX.Play).AddTo(_disposables);
+    }
+
+    public override void Uninstall()
+    {
+        _disposables.Dispose(); // Автоматическая отписка от всех
+    }
+}
+```
+
+### 3. Expressions для условной логики
+
+```csharp
+// Настройка условий
+entity.AddFireCondition(new AndExpression(
+    () => _health.Value > 0,  // Жив
+    () => _ammo.Value > 0,    // Есть патроны
+    () => _cooldown.IsCompleted()  // Cooldown завершен
+));
+
+// Использование
+if (entity.GetFireCondition().Invoke())
+{
+    // Выполнить действие
+}
+```
+
+### 4. Setters для Decoupling
+
+```csharp
+public sealed class InputController : IEntityInit, IEntityTick
+{
+    private ISetter<Vector3> _moveDirection; // Setter интерфейс
+
+    public void Init(IEntity entity)
+    {
+        _moveDirection = entity.GetValue<ISetter<Vector3>>("MoveDirection");
+    }
+
+    public void Tick(IEntity entity, float deltaTime)
+    {
+        float dx = Input.GetAxis("Horizontal");
+        _moveDirection.Value = new Vector3(dx, 0, 0); // Просто устанавливаем
+    }
+}
+```
+
+### 5. Cooldown для Timed Actions
+
+```csharp
+public override void Install(IEntity weapon)
+{
+    Cooldown cooldown = new Cooldown(0.5f);
+    weapon.AddFireCooldown(cooldown);
+
+    weapon.AddFireAction(new InlineAction(() =>
+    {
+        if (!cooldown.IsCompleted())
+            return;
+
+        BulletUseCase.Spawn(...);
+        cooldown.ResetTime();
+    }));
+
+    // Автоматический тик
+    weapon.WhenFixedTick(cooldown.Tick);
+}
+```
+
 ## Заключение
 
 Система EntityAPI в CosMiner обеспечивает:
 - **Автоматическую генерацию** API методов
-- **Единообразный интерфейс** для работы с компонентами  
+- **Единообразный интерфейс** для работы с компонентами
 - **Производительность** через aggressive inlining
 - **Модульность** через разделение UseCase, Behaviour, Installer
 - **Гибкую систему поведений** с полным жизненным циклом
+
+### Ключевые принципы для запоминания
+
+1. **Installers** - конфигурация сущностей, передача зависимостей
+2. **Behaviours** - логика жизненного цикла, настройка КОГДА выполнять
+3. **UseCases** - бизнес-логика, операции над entities
+4. **Самодостаточные компоненты** - изолированные классы с собственной логикой
+5. **Reactive системы** - автоматическое распространение изменений
+6. **Request/Event/Action** - разные паттерны коммуникации для разных задач
 
 Следуя этому гайду, вы сможете легко добавлять новые механики в игру, сохраняя архитектурную целостность проекта.
