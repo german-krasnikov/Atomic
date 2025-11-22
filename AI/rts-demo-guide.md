@@ -2387,12 +2387,98 @@ Object Pooling (масштабирование) =
 Production-ready архитектура
 ```
 
+---
+
+## 📚 Связанные ресурсы и Best Practices
+
+### Рекомендуемые Best Practices из Docs/
+
+**Архитектурные паттерны:**
+- [Modular Entity Installers](../Docs/BestPractices/ModularEntityInstallers.md) - модульная композиция (Core/Content/View)
+- [Entity System](../Docs/BestPractices/EntitySystem.md) - Factory/Pool/World/View separation (используется в RTS)
+- [Project Folder Organization](../Docs/BestPractices/ProjectFolderOrganization.md) - Core/Content/View структура
+- [Request-Condition-Action-Event](../Docs/BestPractices/RequestConditionActionEvent.md) - RCAE flow
+
+**Производительность и оптимизация:**
+- [Iterating Over Entity Collections](../Docs/BestPractices/IteratingOverEntityCollections.md) - избегаем boxing
+- [Using Entity Pool with Factories](../Docs/BestPractices/UsingEntityPoolWithFactories.md) - пулинг в RTS
+- [Iterating Over Entity](../Docs/BestPractices/IteratingOverEntity.md) - эффективная итерация
+
+**Коммуникационные паттерны:**
+- [Using Requests](../Docs/BestPractices/UsingRequests.md) - MoveRequest для AI/Player
+- [Using Events](../Docs/BestPractices/UsingEvents.md) - event-driven architecture
+- [Using Observe](../Docs/BestPractices/UsingObserveWithReactiveValues.md) - reactive View binding
+
+**Управление жизненным циклом:**
+- [Using Subscriptions with DisposeComposite](../Docs/BestPractices/UsingSubscriptionsWithDisposeComposite.md)
+- [Uninstall Entity Installer](../Docs/BestPractices/UninstallEntityInstaller.md) - для View pooling
+
+**Абстракции:**
+- [Prefer Abstract Interfaces](../Docs/BestPractices/PreferAbstractInterfaces.md) - IValue, IVariable
+- [Using Expressions](../Docs/BestPractices/UsingExpressions.md) - условная логика
+
+---
+
+## 🎯 Когда использовать RTS Level?
+
+RTS Demo демонстрирует **Level 3** архитектуры - production-grade решение. Используйте этот подход когда:
+
+**Признаки для Level 3:**
+- ✅ 1000+ entities (юниты, снаряды, строения)
+- ✅ Производительность критична (RTS, симуляции)
+- ✅ Нужна максимальная переиспользуемость (Core systems)
+- ✅ Требуется Burst Compilation
+- ✅ Сложные spatial queries (SpatialHash)
+- ✅ Динамическое создание entities (Factory + Pool)
+
+**Не нужен RTS Level если:**
+- ❌ < 500 entities → используйте [Shooter Level](shooter-demo-guide.md)
+- ❌ < 50 entities → используйте [Beginner Level](beginner-demo-guide.md)
+
+**Ключевые отличия от Shooter:**
+
+| Aspect | Shooter (Level 2) | RTS (Level 3) |
+|--------|-------------------|---------------|
+| **Entities** | SceneEntity | Factory + Catalog + Pool |
+| **Structure** | Flat Installers | Core/Content/View |
+| **Performance** | Standard | Burst + SpatialHash |
+| **Scalability** | 50-500 entities | 1000+ entities |
+| **Reusability** | Modular Installers | Core Systems |
+| **Memory** | Basic pooling | Multi-level pooling |
+
+---
+
 ### Применение знаний
 
 После изучения всех трех демо (Beginner, Shooter, RTS) вы готовы:
-1. Создавать масштабируемые игры
-2. Организовывать сложные системы
-3. Оптимизировать производительность
-4. Применять продвинутые паттерны
+1. Создавать масштабируемые игры любой сложности
+2. Организовывать сложные системы с правильной архитектурой
+3. Оптимизировать производительность для 1000+ entities
+4. Применять продвинутые паттерны (Burst, SpatialHash, EntityFilter)
+5. Выбирать правильный уровень архитектуры для проекта
 
-**Следующий шаг:** Создание собственной игры с применением изученных принципов!
+**Практические шаги:**
+1. Начните с [Beginner Level](beginner-demo-guide.md) для прототипа
+2. Масштабируйтесь до [Shooter Level](shooter-demo-guide.md) при росте проекта
+3. Переходите на [RTS Level](rts-demo-guide.md) для production-grade требований
+4. Используйте [Feature Decomposition Guide](feature-decomposition-guide.md) для планирования фич
+5. Применяйте [Best Practices](../Docs/BestPractices/) на каждом этапе
+
+---
+
+## 📖 Связанные Guides
+
+- [Atomic Guide v2](atomic-guide-v2.md) - полное руководство по архитектуре
+- [Beginner Demo Guide](beginner-demo-guide.md) - Level 1 простая архитектура
+- [Shooter Demo Guide](shooter-demo-guide.md) - Level 2 многоуровневая архитектура
+- [Feature Decomposition Guide](feature-decomposition-guide.md) - методология внедрения фич
+- [Presenter Pattern Guide](presenter-pattern-guide.md) - MVP паттерн для UI
+- [Feature Checklist](feature-checklist.md) - чек-лист для проверки
+
+---
+
+**RTS Demo Guide завершен!**
+
+Этот гайд показал production-grade архитектуру с Core/Content/View separation, Factory Pattern, Burst Compilation и оптимизациями для 1000+ entities.
+
+Следуя RTS архитектуре, вы создадите высокопроизводительную игру готовую к коммерческому релизу!

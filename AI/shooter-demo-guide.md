@@ -3919,3 +3919,77 @@ public void Init(IGameUI entity)
 - ✅ Тестируемость (нет Unity зависимостей в Presenters)
 
 ---
+
+## 📚 Связанные ресурсы и Best Practices
+
+### Рекомендуемые Best Practices из Docs/
+
+**Архитектурные паттерны:**
+- [Modular Entity Installers](../Docs/BestPractices/ModularEntityInstallers.md) - модульная композиция (используется в Shooter)
+- [Request-Condition-Action-Event](../Docs/BestPractices/RequestConditionActionEvent.md) - RCAE flow
+- [Entity System](../Docs/BestPractices/EntitySystem.md) - Factory/Pool/World/View separation
+- [Project Folder Organization](../Docs/BestPractices/ProjectFolderOrganization.md) - структура проекта
+
+**Коммуникационные паттерны:**
+- [Using Requests](../Docs/BestPractices/UsingRequests.md) - Producer-Consumer (MoveRequest, FireRequest)
+- [Using Events](../Docs/BestPractices/UsingEvents.md) - event-driven (KillEvent, GameOverEvent)
+- [Using Observe](../Docs/BestPractices/UsingObserveWithReactiveValues.md) - reactive UI binding
+
+**Управление жизненным циклом:**
+- [Using Subscriptions with DisposeComposite](../Docs/BestPractices/UsingSubscriptionsWithDisposeComposite.md) - для Presenters
+- [Uninstall Entity Installer](../Docs/BestPractices/UninstallEntityInstaller.md) - cleanup
+
+**Абстракции:**
+- [Prefer Abstract Interfaces](../Docs/BestPractices/PreferAbstractInterfaces.md) - IValue, IVariable вместо конкретных типов
+
+---
+
+## 🎯 Когда использовать Shooter Level?
+
+Shooter Demo демонстрирует **Level 2** архитектуры. Используйте этот подход когда:
+
+**Признаки для Level 2:**
+- ✅ 50-500 entities
+- ✅ Нужна иерархия контекстов (App → Game → Player)
+- ✅ Несколько игроков с общими ресурсами
+- ✅ Сложная бизнес-логика требует UseCases
+- ✅ Нужны модульные Installers
+
+**Не нужен Shooter Level если:**
+- ❌ < 50 entities → используйте [Beginner Level](beginner-demo-guide.md)
+- ❌ > 1000 entities → рассмотрите [RTS Level](rts-demo-guide.md)
+
+**Переход на RTS Level 3:**
+
+Когда проект вырастет и потребуется:
+- Core/Content/View separation
+- Factory + Catalog + EntityWorld
+- Burst Compilation
+- SpatialHash для оптимизации
+- 1000+ entities
+
+**➡️ Далее:** [RTS Demo Guide](rts-demo-guide.md) - Level 3 Production архитектура
+
+---
+
+## 📖 Связанные Guides
+
+- [Atomic Guide v2](atomic-guide-v2.md) - полное руководство по архитектуре
+- [Beginner Demo Guide](beginner-demo-guide.md) - Level 1 простая архитектура
+- [RTS Demo Guide](rts-demo-guide.md) - Level 3 production архитектура
+- [Feature Decomposition Guide](feature-decomposition-guide.md) - методология внедрения фич
+- [Presenter Pattern Guide](presenter-pattern-guide.md) - детальный гайд по Presenter паттерну
+- [Feature Checklist](feature-checklist.md) - чек-лист для проверки
+
+---
+
+**Shooter Demo Guide завершен!**
+
+Этот гайд показал многоуровневую архитектуру контекстов с модульными Installers, Controllers, UseCases и Presenter Pattern.
+
+**Следующие шаги:**
+1. Изучить [RTS Demo Guide](rts-demo-guide.md) для Level 3 production паттернов
+2. Применить модульные Installers из [Best Practices](../Docs/BestPractices/ModularEntityInstallers.md)
+3. Внедрять фичи используя [Feature Decomposition Guide](feature-decomposition-guide.md)
+
+Следуя Shooter архитектуре, вы создадите масштабируемый проект готовый к enterprise-level требованиям!

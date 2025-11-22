@@ -979,6 +979,171 @@ Production-ready архитектура
 - **Shooter Demo** - иерархия контекстов
 - **RTS Demo** - продвинутые паттерны и масштабирование
 
+### Три уровня архитектурной сложности
+
+Atomic Framework поддерживает три уровня сложности, выбирайте в зависимости от масштаба проекта:
+
+#### Level 1: Beginner (Простая архитектура)
+**Когда использовать:** Прототипы, обучение, небольшие проекты (< 50 entities)
+
+**Характеристики:**
+- `SceneEntity` вместо Factory/Pool
+- Монолитные Installers
+- Простые Behaviours без UseCases
+- Прямые ссылки на префабы
+
+**Пример:** Beginner Demo (сбор монет)
+```csharp
+public sealed class CharacterInstaller : SceneEntityInstaller
+{
+    public override void Install(IEntity entity)
+    {
+        entity.AddTransform(this.transform);
+        entity.AddMoveSpeed(_moveSpeed);
+        entity.AddMovementDirection(new Variable<Vector3>());
+        entity.AddBehaviour<MovementBehaviour>();
+        entity.AddBehaviour<InputBehaviour>();
+    }
+}
+```
+
+**➡️ См. подробно:** [Beginner Demo Guide](beginner-demo-guide.md)
+
+---
+
+#### Level 2: Shooter (Многоуровневая архитектура контекстов)
+**Когда использовать:** Средние проекты с иерархией систем (50-500 entities)
+
+**Характеристики:**
+- Иерархия контекстов (App → Game → Player → Entity)
+- Модульные Installers
+- Controllers (связь контекстов)
+- UseCases (бизнес-логика)
+- Presenter Pattern (UI)
+
+**Пример иерархии:**
+```
+AppContext (Singleton)
+    ↓ управляет
+GameContext (Singleton)
+    ↓ содержит
+PlayerContext[] (Multiple)
+    ↓ владеет
+GameEntity (Actor)
+```
+
+**Пример Controller:**
+```csharp
+public sealed class CharacterMoveController : IEntityInit<IPlayerContext>, IEntityTick
+{
+    private readonly IGameContext _gameContext;
+    private IActor _character;
+    private IPlayerContext _playerContext;
+
+    public CharacterMoveController(IGameContext gameContext)
+    {
+        _gameContext = gameContext;
+    }
+
+    public void Init(IPlayerContext context)
+    {
+        _character = context.GetCharacter();
+        _playerContext = context;
+    }
+
+    public void Tick(IEntity entity, float deltaTime)
+    {
+        Vector3 moveDirection = MoveInputUseCase.GetMoveDirection(_playerContext, _gameContext);
+        _character.GetMovementDirection().Value = moveDirection;
+    }
+}
+```
+
+**➡️ См. подробно:** [Shooter Demo Guide](shooter-demo-guide.md)
+
+---
+
+#### Level 3: RTS (Production-Grade архитектура)
+**Когда использовать:** Крупные проекты, RTS, симуляции (1000+ entities)
+
+**Характеристики:**
+- Core/Content/View separation
+- Factory + Catalog + Pool
+- EntityWorld для batch операций
+- Burst Compilation
+- SpatialHash для оптимизации запросов
+- Static buffers (zero allocation)
+
+**Пример структуры:**
+```
+Units/
+├── Core/                   # Переиспользуемые системы
+│   ├── Move/              # Movement installer + UseCase
+│   ├── Combat/            # Combat installer + UseCase
+│   └── AI/                # AI installer + Behaviour
+├── Content/               # Конкретные типы
+│   ├── Tank/             # TankFactory (Range Combat)
+│   └── Warrior/          # WarriorFactory (Melee Combat)
+└── View/                 # Презентация
+    ├── PositionView/
+    └── TeamColorView/
+```
+
+**Пример оптимизированного UseCase:**
+```csharp
+[BurstCompile]
+public static class MoveUseCase
+{
+    // High-level wrapper
+    public static void MoveStep(IUnit entity, Vector3 direction, float deltaTime)
+    {
+        IReactiveVariable<Vector3> position = entity.GetPosition();
+        MoveStep(position.Value, direction, entity.GetMoveSpeed().Value,
+                 deltaTime, out float3 next);
+        position.Value = next;
+    }
+
+    // Burst-compiled pure function
+    [BurstCompile]
+    public static void MoveStep(in float3 position, in float3 direction,
+                                in float speed, in float deltaTime, out float3 result)
+        => result = position + speed * deltaTime * direction;
+}
+```
+
+**➡️ См. подробно:** [RTS Demo Guide](rts-demo-guide.md)
+
+---
+
+### Best Practices - Ссылки на документацию
+
+Рекомендуемые практики находятся в `Docs/BestPractices/`:
+
+**Архитектурные паттерны:**
+- [Modular Entity Installers](../Docs/BestPractices/ModularEntityInstallers.md) - 3 подхода к организации
+- [Request-Condition-Action-Event](../Docs/BestPractices/RequestConditionActionEvent.md) - RCAE flow
+- [Entity System](../Docs/BestPractices/EntitySystem.md) - Factory/Pool/World/View separation
+- [Project Folder Organization](../Docs/BestPractices/ProjectFolderOrganization.md) - структура проекта
+
+**Коммуникационные паттерны:**
+- [Using Requests](../Docs/BestPractices/UsingRequests.md) - Producer-Consumer pattern
+- [Using Events](../Docs/BestPractices/UsingEvents.md) - event-driven architecture
+- [Using Observe](../Docs/BestPractices/UsingObserveWithReactiveValues.md) - reactive подписки
+
+**Управление жизненным циклом:**
+- [Using Subscriptions with DisposeComposite](../Docs/BestPractices/UsingSubscriptionsWithDisposeComposite.md)
+- [Uninstall Entity Installer](../Docs/BestPractices/UninstallEntityInstaller.md)
+
+**Производительность:**
+- [Iterating Over Entity Collections](../Docs/BestPractices/IteratingOverEntityCollections.md)
+- [Using Cooldown in Game Mechanics](../Docs/BestPractices/UsingCooldownInGameMechanics.md)
+
+**Абстракции:**
+- [Prefer Abstract Interfaces](../Docs/BestPractices/PreferAbstractInterfaces.md) - IValue вместо Const
+- [Using Expressions](../Docs/BestPractices/UsingExpressions.md) - conditional logic
+
+---
+
 ### Дальнейшее изучение
 
 1. **Best Practices** документация в `Docs/BestPractices/`
@@ -988,5 +1153,6 @@ Production-ready архитектура
 5. **Feature Guides** (Рекомендуется к прочтению):
    - [Feature Decomposition Guide](feature-decomposition-guide.md) - пошаговый процесс внедрения
    - [Feature Checklist](feature-checklist.md) - чеклист для самопроверки
+   - [Presenter Pattern Guide](presenter-pattern-guide.md) - MVP паттерн для UI
 
 Следуя этому гайду, вы сможете создавать масштабируемые, производительные и легко поддерживаемые игры на Unity с использованием Atomic Framework v2.

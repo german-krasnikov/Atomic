@@ -2929,9 +2929,182 @@ _countdown.OnCompleted += () =>
 
 ---
 
+## 🚀 Масштабирование на следующий уровень
+
+Beginner Demo демонстрирует **Level 1** архитектуры. Когда проект растет, рассмотрите переход на **Level 2 (Shooter)**:
+
+### Когда переходить на Shooter уровень?
+
+**Признаки, что нужен Shooter уровень:**
+- ✅ Более 50 entities
+- ✅ Нужна иерархия контекстов (App → Game → Player)
+- ✅ Несколько игроков/команд с общими ресурсами
+- ✅ Сложная бизнес-логика, требующая UseCases
+- ✅ Нужны модульные Installers для переиспользования
+
+### Что изменится при переходе?
+
+| Aspect | Beginner (Level 1) | Shooter (Level 2) |
+|--------|-------------------|-------------------|
+| **Entities** | SceneEntity | SceneEntity + Factory |
+| **Installers** | Монолитные | Модульные (композиция) |
+| **Logic** | Behaviours | Controllers + UseCases |
+| **Context** | Flat (GameContext) | Hierarchy (App → Game → Player) |
+| **UI** | Direct binding | Presenter Pattern |
+
+### Примеры трансформации
+
+**Было (Beginner):**
+```csharp
+public sealed class CharacterInstaller : SceneEntityInstaller
+{
+    public override void Install(IEntity entity)
+    {
+        entity.AddTransform(this.transform);
+        entity.AddMoveSpeed(_moveSpeed);
+        entity.AddMovementDirection(new Variable<Vector3>());
+        entity.AddBehaviour<MovementBehaviour>();
+        entity.AddBehaviour<InputBehaviour>();
+    }
+}
+```
+
+**Стало (Shooter) - Модульные Installers:**
+```csharp
+// Модульный Installer для Movement
+[Serializable]
+public class MovementEntityInstaller : IEntityInstaller<IGameEntity>
+{
+    [SerializeField] private Const<float> _moveSpeed = 3;
+
+    public void Install(IGameEntity entity)
+    {
+        entity.AddMoveSpeed(_moveSpeed);
+        entity.AddMovementDirection(new ReactiveVector3());
+        entity.AddBehaviour<MovementBehaviour>();
+    }
+}
+
+// Композиция
+public sealed class CharacterInstaller : SceneEntityInstaller<IGameEntity>
+{
+    [SerializeField] private MovementEntityInstaller _movementInstaller;
+    [SerializeField] private InputEntityInstaller _inputInstaller;
+
+    public override void Install(IGameEntity entity)
+    {
+        entity.Install(_movementInstaller); // Переиспользуемо!
+        entity.Install(_inputInstaller);
+    }
+}
+```
+
+**Controller вместо прямого Behaviour:**
+```csharp
+// PlayerContext управляет Character через Controller
+public sealed class CharacterMoveController : IEntityInit<IPlayerContext>, IEntityTick
+{
+    private readonly IGameContext _gameContext;
+    private IActor _character;
+    private IPlayerContext _playerContext;
+
+    public CharacterMoveController(IGameContext gameContext)
+    {
+        _gameContext = gameContext;
+    }
+
+    public void Init(IPlayerContext context)
+    {
+        _character = context.GetCharacter();
+        _playerContext = context;
+    }
+
+    public void Tick(IEntity entity, float deltaTime)
+    {
+        // Логика вынесена в UseCase
+        Vector3 direction = MoveInputUseCase.GetMoveDirection(_playerContext, _gameContext);
+        _character.GetMovementDirection().Value = direction;
+    }
+}
+```
+
+**UseCase для бизнес-логики:**
+```csharp
+public static class MoveInputUseCase
+{
+    public static Vector3 GetMoveDirection(IPlayerContext playerContext, IGameContext gameContext)
+    {
+        Vector3 direction = Vector3.zero;
+
+        if (!GameCycleUseCase.IsPlaying(gameContext))
+            return direction; // Проверка состояния игры
+
+        InputMap inputMap = playerContext.GetInputMap();
+
+        if (Input.GetKey(inputMap.MoveForward))
+            direction.z = 1;
+        else if (Input.GetKey(inputMap.MoveBack))
+            direction.z = -1;
+
+        if (Input.GetKey(inputMap.MoveLeft))
+            direction.x = -1;
+        else if (Input.GetKey(inputMap.MoveRight))
+            direction.x = 1;
+
+        return direction;
+    }
+}
+```
+
+**➡️ Переход:** [Shooter Demo Guide](shooter-demo-guide.md) - Level 2 архитектура
+
+---
+
+## 📚 Связанные ресурсы и Best Practices
+
+### Рекомендуемые Best Practices
+
+**Архитектурные паттерны:**
+- [Modular Entity Installers](../Docs/BestPractices/ModularEntityInstallers.md) - 3 подхода к организации
+- [Request-Condition-Action-Event](../Docs/BestPractices/RequestConditionActionEvent.md) - RCAE flow
+- [Project Folder Organization](../Docs/BestPractices/ProjectFolderOrganization.md) - структура проекта
+
+**Коммуникационные паттерны:**
+- [Using Requests](../Docs/BestPractices/UsingRequests.md) - Producer-Consumer pattern
+- [Using Events](../Docs/BestPractices/UsingEvents.md) - event-driven architecture
+- [Using Observe](../Docs/BestPractices/UsingObserveWithReactiveValues.md) - reactive подписки
+
+**Управление жизненным циклом:**
+- [Using Subscriptions with DisposeComposite](../Docs/BestPractices/UsingSubscriptionsWithDisposeComposite.md)
+- [Uninstall Entity Installer](../Docs/BestPractices/UninstallEntityInstaller.md)
+
+**Производительность:**
+- [Using Cooldown in Game Mechanics](../Docs/BestPractices/UsingCooldownInGameMechanics.md)
+- [Choosing Between Timer and Cooldown](../Docs/BestPractices/ChosingBetweenTimerAndCooldown.md)
+
+**Абстракции:**
+- [Prefer Abstract Interfaces](../Docs/BestPractices/PreferAbstractInterfaces.md) - IValue вместо Const
+- [Using Expressions](../Docs/BestPractices/UsingExpressions.md) - conditional logic
+
+### Guides
+
+- [Atomic Guide v2](atomic-guide-v2.md) - полное руководство по архитектуре
+- [Shooter Demo Guide](shooter-demo-guide.md) - Level 2 архитектура
+- [RTS Demo Guide](rts-demo-guide.md) - Level 3 production архитектура
+- [Feature Decomposition Guide](feature-decomposition-guide.md) - методология внедрения фич
+- [Presenter Pattern Guide](presenter-pattern-guide.md) - MVP паттерн для UI
+- [Feature Checklist](feature-checklist.md) - чек-лист для проверки
+
+---
+
 **Beginner Demo Guide завершен!**
 
-**Размер:** ~3600 строк (увеличен в 4 раза)
+Этот гайд показал пошаговое внедрение фич от простых (Transform, Movement) к сложным (Game Timer, Team System).
 
-**Следующие шаги:** Создать общий гайд по декомпозиции фич для всех проектов.
+**Следующие шаги:**
+1. Изучить [Shooter Demo Guide](shooter-demo-guide.md) для Level 2 архитектуры
+2. Практиковать модульные Installers из [Best Practices](../Docs/BestPractices/ModularEntityInstallers.md)
+3. Использовать [Feature Decomposition Guide](feature-decomposition-guide.md) для планирования новых фич
+
+Следуя этим практикам, вы создадите масштабируемый проект, готовый к росту!
 
