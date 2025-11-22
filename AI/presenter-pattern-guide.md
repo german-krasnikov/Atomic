@@ -182,6 +182,205 @@ public sealed class GameUIInstaller : MonoBehaviour
 
 ---
 
+## Advanced Patterns (Production-Ready)
+
+### 1. Typed Lifecycle Interfaces
+
+В продакшн коде Shooter Demo используются **типизированные lifecycle интерфейсы** вместо generic версий для лучшей type safety и читаемости:
+
+**Вместо:**
+```csharp
+IEntityInit<IMenuUI>
+IEntityDispose
+IEntityEnable
+IEntityDisable
+```
+
+**Используйте:**
+```csharp
+IMenuUIInit        // вместо IEntityInit<IMenuUI>
+IMenuUIDispose     // вместо IEntityDispose
+IMenuUIEnable      // вместо IEntityEnable
+IMenuUIDisable     // вместо IEntityDisable
+
+IGameUIInit        // для GameUI context
+IGameUIDispose
+```
+
+**Преимущества:**
+- ✅ Явная привязка к конкретному UIContext
+- ✅ Лучшая читаемость кода
+- ✅ Compile-time type safety
+- ✅ Автокомплит подсказывает правильные интерфейсы
+
+**Пример:**
+```csharp
+public sealed class CountdownPresenter : IGameUIInit, IGameUIDispose
+{
+    private readonly TMP_Text _view;
+    private readonly IGameContext _gameContext;
+
+    private Subscription<float> _subscription;
+
+    public CountdownPresenter(TMP_Text view, IGameContext gameContext)
+    {
+        _view = view;
+        _gameContext = gameContext;
+    }
+
+    public void Init(IGameUI entity)  // Typed parameter
+    {
+        _subscription = _gameContext
+            .GetGameTime()
+            .Observe(this.OnGameTimeChanged);
+    }
+
+    public void Dispose(IGameUI entity)  // Typed parameter
+    {
+        _subscription.Dispose();
+    }
+
+    private void OnGameTimeChanged(float time)
+    {
+        _view.text = $"Game Time: {time:F0}";
+    }
+}
+```
+
+### 2. Context Injection Pattern
+
+**Лучшая практика:** Все зависимости (View + Context) передаются через конструктор:
+
+```csharp
+public sealed class StartScreenPresenter :
+    IMenuUIInit,
+    IMenuUIEnable,
+    IMenuUIDisable
+{
+    private readonly StartScreenView _screenView;  // View - конструктор
+    private readonly IAppContext _appContext;      // Context - конструктор
+
+    private IMenuUI _uIContext;  // UIContext - Init
+
+    public StartScreenPresenter(StartScreenView screenView, IAppContext appContext)
+    {
+        _screenView = screenView;
+        _appContext = appContext;
+    }
+
+    public void Init(IMenuUI context)
+    {
+        _uIContext = context;  // Сохраняем UIContext для навигации
+    }
+
+    public void Enable(IMenuUI entity)
+    {
+        _screenView.OnSelectLevelClicked += this.OnSelectLevelClicked;
+        _screenView.OnStartClicked += this.OnStartClicked;
+        _screenView.OnExitClicked += QuitUseCase.Quit;
+    }
+
+    public void Disable(IMenuUI entity)
+    {
+        _screenView.OnStartClicked -= this.OnStartClicked;
+        _screenView.OnSelectLevelClicked -= this.OnSelectLevelClicked;
+        _screenView.OnExitClicked -= QuitUseCase.Quit;
+    }
+
+    private void OnStartClicked() =>
+        GameLoadingUseCase.StartGame(_appContext);
+
+    private void OnSelectLevelClicked() =>
+        ScreenUseCase.ShowScreen<LevelScreenView>(_uIContext);
+}
+```
+
+**Почему не через Init:**
+```csharp
+// ❌ НЕПРАВИЛЬНО - Context через Singleton
+public void Init(IMenuUI entity)
+{
+    _appContext = AppContext.Instance;  // Плохо!
+}
+
+// ✅ ПРАВИЛЬНО - Context через конструктор
+public StartScreenPresenter(StartScreenView view, IAppContext appContext)
+{
+    _appContext = appContext;  // Хорошо!
+}
+```
+
+### 3. Subscription Pattern с Dispose
+
+**Используйте `Subscription<T>`** для управления подписками на reactive values:
+
+```csharp
+public sealed class CountdownPresenter : IGameUIInit, IGameUIDispose
+{
+    private Subscription<float> _subscription;  // Хранит подписку
+
+    public void Init(IGameUI entity)
+    {
+        // Observe возвращает Subscription<T>
+        _subscription = _gameContext
+            .GetGameTime()
+            .Observe(this.OnGameTimeChanged);
+    }
+
+    public void Dispose(IGameUI entity)
+    {
+        _subscription.Dispose();  // Автоматическая отписка
+    }
+}
+```
+
+**Преимущества перед Observe/Unsubscribe:**
+
+```csharp
+// ❌ Старый паттерн (manual)
+private IReactiveVariable<float> _gameTime;
+
+public void Init(IEntity entity)
+{
+    _gameTime = GameContext.Instance.GetGameTime();
+    _gameTime.Observe(this.OnGameTimeChanged);
+}
+
+public void Dispose(IEntity entity)
+{
+    _gameTime.Unsubscribe(this.OnGameTimeChanged);  // Легко забыть!
+}
+
+// ✅ Новый паттерн (automatic)
+private Subscription<float> _subscription;
+
+public void Init(IGameUI entity)
+{
+    _subscription = _gameContext
+        .GetGameTime()
+        .Observe(this.OnGameTimeChanged);
+}
+
+public void Dispose(IGameUI entity)
+{
+    _subscription.Dispose();  // Гарантированная отписка
+}
+```
+
+**Для нескольких подписок:**
+```csharp
+private Subscription<float> _timeSubscription;
+private Subscription<int> _scoreSubscription;
+
+public void Dispose(IGameUI entity)
+{
+    _timeSubscription?.Dispose();
+    _scoreSubscription?.Dispose();
+}
+```
+
+---
+
 ## Типы Presenters
 
 Atomic Framework поддерживает **7 основных типов Presenters**, каждый для своего сценария использования.
@@ -195,34 +394,38 @@ Atomic Framework поддерживает **7 основных типов Presen
 - Score counter
 - Single stat display
 
-**Пример:**
+**Пример (Production-Ready):**
 
 ```csharp
 using Atomic.Elements;
-using Atomic.Entities;
+using ShooterGame.Gameplay;
 using TMPro;
 
-namespace ShooterGame.Gameplay
+namespace ShooterGame.UI
 {
-    public sealed class CountdownPresenter : IEntityInit, IEntityDispose
+    public sealed class CountdownPresenter : IGameUIInit, IGameUIDispose
     {
         private readonly TMP_Text _view;
-        private IReactiveVariable<float> _gameTime;
+        private readonly IGameContext _gameContext;
 
-        public CountdownPresenter(TMP_Text view)
+        private Subscription<float> _subscription;
+
+        public CountdownPresenter(TMP_Text view, IGameContext gameContext)
         {
             _view = view;
+            _gameContext = gameContext;
         }
 
-        public void Init(IEntity _)
+        public void Init(IGameUI entity)
         {
-            _gameTime = GameContext.Instance.GetGameTime();
-            _gameTime.Observe(this.OnGameTimeChanged);
+            _subscription = _gameContext
+                .GetGameTime()
+                .Observe(this.OnGameTimeChanged);
         }
 
-        public void Dispose(IEntity _)
+        public void Dispose(IGameUI entity)
         {
-            _gameTime.Unsubscribe(this.OnGameTimeChanged);
+            _subscription.Dispose();
         }
 
         private void OnGameTimeChanged(float time)
@@ -234,10 +437,10 @@ namespace ShooterGame.Gameplay
 ```
 
 **Ключевые особенности:**
+- ✅ Typed interfaces (IGameUIInit, IGameUIDispose)
+- ✅ Context injection через конструктор
+- ✅ Subscription pattern с автоматическим Dispose
 - ✅ Минималистичный - только Init и Dispose
-- ✅ Constructor injection для View
-- ✅ Observe pattern для подписки
-- ✅ Symmetric subscribe/unsubscribe
 
 **Файл:** `/Assets/Examples/Shooter/Scripts/UI/Game/Countdown/CountdownPresenter.cs`
 
@@ -385,44 +588,33 @@ namespace ShooterGame.Gameplay
 - Inventory systems
 - Level selection screens
 
-**Пример:**
+**Пример (Production-Ready):**
 
 ```csharp
-using Atomic.Entities;
 using ShooterGame.App;
 
 namespace ShooterGame.UI
 {
     public sealed class LevelScreenPresenter :
-        IEntityInit<IMenuUI>,
-        IEntityDispose,
-        IEntityEnable,
-        IEntityDisable
+        IMenuUIInit,
+        IMenuUIDispose,
+        IMenuUIEnable,
+        IMenuUIDisable
     {
+        private readonly IAppContext _appContext;
         private readonly LevelScreenView _screenView;
         private IMenuUI _uiContext;
-        private IAppContext _appContext;
 
-        public LevelScreenPresenter(LevelScreenView screenView)
+        public LevelScreenPresenter(LevelScreenView screenView, IAppContext appContext)
         {
             _screenView = screenView;
+            _appContext = appContext;
         }
 
         public void Init(IMenuUI context)
         {
-            _appContext = AppContext.Instance;
             _uiContext = context;
             this.SpawnLevelItems();  // Создаём дочерние Presenters
-        }
-
-        public void Enable(IEntity entity)
-        {
-            _screenView.OnCloseClicked += this.OnCloseClicked;
-        }
-
-        public void Disable(IEntity entity)
-        {
-            _screenView.OnCloseClicked -= this.OnCloseClicked;
         }
 
         private void SpawnLevelItems()
@@ -447,7 +639,20 @@ namespace ShooterGame.UI
             }
         }
 
-        public void Dispose(IEntity entity)
+        public void Enable(IMenuUI entity)
+        {
+            _screenView.OnCloseClicked += this.OnCloseClicked;
+        }
+
+        public void Disable(IMenuUI entity)
+        {
+            _screenView.OnCloseClicked -= this.OnCloseClicked;
+        }
+
+        private void OnCloseClicked() =>
+            ScreenUseCase.ShowScreen<StartScreenView>(_uiContext);
+
+        public void Dispose(IMenuUI entity)
         {
             // Удаляем все дочерние Presenters
             _uiContext.DelBehaviours<LevelItemPresenter>();
@@ -455,14 +660,13 @@ namespace ShooterGame.UI
             // Очищаем View
             _screenView.ClearAllItems();
         }
-
-        private void OnCloseClicked() =>
-            ScreenUseCase.ShowScreen<StartScreenView>(_uiContext);
     }
 }
 ```
 
 **Ключевые особенности:**
+- ✅ Typed interfaces (IMenuUIInit, IMenuUIDispose, IMenuUIEnable, IMenuUIDisable)
+- ✅ Context injection через конструктор (AppContext + View)
 - ✅ Создание дочерних Presenters в Init
 - ✅ Добавление в UIContext через AddBehaviour
 - ✅ Массовое удаление через DelBehaviours<T>
@@ -483,25 +687,24 @@ namespace ShooterGame.UI
 - Inventory slots
 - Level buttons
 
-**Пример:**
+**Пример (Production-Ready):**
 
 ```csharp
-using Atomic.Entities;
 using ShooterGame.App;
 
 namespace ShooterGame.UI
 {
-    public sealed class LevelItemPresenter : IEntityInit<IMenuUI>, IEntityDispose
+    public sealed class LevelItemPresenter : IMenuUIInit, IMenuUIDispose
     {
         private readonly IAppContext _context;
-        private readonly int _level;
         private readonly LevelItemView _view;
+        private readonly int _level;
 
         public LevelItemPresenter(IAppContext context, int level, LevelItemView view)
         {
             _context = context;
-            _level = level;
             _view = view;
+            _level = level;
         }
 
         public void Init(IMenuUI context)
@@ -523,21 +726,22 @@ namespace ShooterGame.UI
             _view.OnClicked += this.OnClicked;
         }
 
-        public void Dispose(IEntity entity)
+        public void Dispose(IMenuUI entity)
         {
             _view.OnClicked -= this.OnClicked;
         }
 
         private void OnClicked() =>
-            LoadGameUseCase.StartGame(_context, _level);
+            GameLoadingUseCase.StartGame(_context, _level);
     }
 }
 ```
 
 **Ключевые особенности:**
-- ✅ Constructor injection всех зависимостей
+- ✅ Typed interfaces (IMenuUIInit, IMenuUIDispose)
+- ✅ Constructor injection всех зависимостей (Context, level, View)
 - ✅ Conditional visual state setup
-- ✅ Event subscription в Init
+- ✅ Event subscription в Init, отписка в Dispose
 - ✅ UseCase call на button click
 - ✅ Не управляет lifecycle View (управляет parent)
 
@@ -555,43 +759,42 @@ namespace ShooterGame.UI
 - Pause menu
 - Game over screen
 
-**Пример:**
+**Пример (Production-Ready):**
 
 ```csharp
-using Atomic.Entities;
 using ShooterGame.App;
 
 namespace ShooterGame.UI
 {
     public sealed class StartScreenPresenter :
-        IEntityInit<IMenuUI>,
-        IEntityEnable,
-        IEntityDisable
+        IMenuUIInit,
+        IMenuUIEnable,
+        IMenuUIDisable
     {
         private readonly StartScreenView _screenView;
+        private readonly IAppContext _appContext;
 
-        private IAppContext _appContext;
         private IMenuUI _uIContext;
 
-        public StartScreenPresenter(StartScreenView screenView)
+        public StartScreenPresenter(StartScreenView screenView, IAppContext appContext)
         {
             _screenView = screenView;
+            _appContext = appContext;
         }
 
         public void Init(IMenuUI context)
         {
             _uIContext = context;
-            _appContext = AppContext.Instance;
         }
 
-        public void Enable(IEntity entity)
+        public void Enable(IMenuUI entity)
         {
             _screenView.OnSelectLevelClicked += this.OnSelectLevelClicked;
             _screenView.OnStartClicked += this.OnStartClicked;
-            _screenView.OnExitClicked += QuitUseCase.Quit;  // Прямой вызов UseCase
+            _screenView.OnExitClicked += QuitUseCase.Quit;
         }
 
-        public void Disable(IEntity entity)
+        public void Disable(IMenuUI entity)
         {
             _screenView.OnStartClicked -= this.OnStartClicked;
             _screenView.OnSelectLevelClicked -= this.OnSelectLevelClicked;
@@ -599,7 +802,7 @@ namespace ShooterGame.UI
         }
 
         private void OnStartClicked() =>
-            LoadGameUseCase.StartGame(_appContext);
+            GameLoadingUseCase.StartGame(_appContext);
 
         private void OnSelectLevelClicked() =>
             ScreenUseCase.ShowScreen<LevelScreenView>(_uIContext);
@@ -608,9 +811,10 @@ namespace ShooterGame.UI
 ```
 
 **Ключевые особенности:**
-- ✅ Multiple event subscriptions
-- ✅ Enable/Disable для UI events
-- ✅ Init для данных
+- ✅ Typed interfaces (IMenuUIInit, IMenuUIEnable, IMenuUIDisable)
+- ✅ Context injection через конструктор (не через Singleton)
+- ✅ Multiple event subscriptions в Enable/Disable
+- ✅ UIContext сохраняется в Init для navigation
 - ✅ Прямой вызов UseCases (QuitUseCase.Quit)
 - ✅ Type-based navigation (ShowScreen<T>)
 
@@ -818,6 +1022,38 @@ public void Dispose(IEntity entity)
 
 **Правило:** Каждая подписка должна иметь соответствующую отписку.
 
+**Production-Ready Pattern (рекомендуется):**
+
+```csharp
+// ✅ ЛУЧШИЙ ВАРИАНТ - Subscription<T> с автоматической очисткой
+public sealed class CountdownPresenter : IGameUIInit, IGameUIDispose
+{
+    private readonly TMP_Text _view;
+    private readonly IGameContext _gameContext;
+
+    private Subscription<float> _subscription;  // Хранит подписку
+
+    public void Init(IGameUI entity)
+    {
+        _subscription = _gameContext
+            .GetGameTime()
+            .Observe(this.OnGameTimeChanged);
+    }
+
+    public void Dispose(IGameUI entity)
+    {
+        _subscription.Dispose();  // Автоматическая отписка
+    }
+
+    private void OnGameTimeChanged(float time)
+    {
+        _view.text = $"Game Time: {time:F0}";
+    }
+}
+```
+
+**Legacy Pattern (для простых случаев):**
+
 ```csharp
 // ✅ ПРАВИЛЬНО - симметрично
 public void Init(IEntity entity)
@@ -842,12 +1078,54 @@ public void Dispose(IEntity entity)
 }
 ```
 
+**Преимущества Subscription<T>:**
+- Невозможно забыть отписаться (хранится как поле)
+- Поддержка множественных подписок (Subscription.Compose)
+- Более чистый код
+
 ### 2. Constructor Injection
 
-**Правило:** View и конфигурация через конструктор, данные в Init.
+**Правило:** View, конфигурация И контексты через конструктор, данные в Init.
+
+**Production-Ready Pattern (рекомендуется):**
 
 ```csharp
-// ✅ ПРАВИЛЬНО
+// ✅ ЛУЧШИЙ ВАРИАНТ - Context Injection вместо Singleton
+public sealed class StartScreenPresenter :
+    IMenuUIInit,
+    IMenuUIEnable,
+    IMenuUIDisable
+{
+    private readonly StartScreenView _screenView;  // View - через конструктор
+    private readonly IAppContext _appContext;       // Context - через конструктор
+
+    private IMenuUI _uIContext;  // UI Context - в Init
+
+    public StartScreenPresenter(StartScreenView screenView, IAppContext appContext)
+    {
+        _screenView = screenView;
+        _appContext = appContext;  // Инжектим, не используем Singleton!
+    }
+
+    public void Init(IMenuUI context)
+    {
+        _uIContext = context;
+    }
+
+    public void Enable(IMenuUI entity)
+    {
+        _screenView.OnStartClicked += this.OnStartClicked;
+    }
+
+    private void OnStartClicked() =>
+        GameLoadingUseCase.StartGame(_appContext);  // Используем инжектированный контекст
+}
+```
+
+**Legacy Pattern (для простых случаев):**
+
+```csharp
+// ✅ ПРАВИЛЬНО - простой вариант с Singleton
 public sealed class KillsPresenter : IEntityInit, IEntityDispose
 {
     private readonly TMP_Text _text;        // View - через конструктор
@@ -879,6 +1157,11 @@ public sealed class KillsPresenter : IEntityInit, IEntityDispose
 }
 ```
 
+**Преимущества Context Injection:**
+- Лучшая тестируемость (можно подменить mock контекст)
+- Явные зависимости (видно что нужно Presenter'у)
+- Нет скрытой связности через Singleton
+
 ### 3. Separation of Concerns
 
 **Правило:** Бизнес-логика в UseCases, не в Presenters.
@@ -901,10 +1184,40 @@ private void OnStartClicked()
 
 ### 4. Type Safety
 
-**Правило:** Используйте IEntityInit<TContext> для типобезопасности.
+**Правило:** Используйте типизированные интерфейсы для конкретных контекстов.
+
+**Production-Ready Pattern (рекомендуется):**
 
 ```csharp
-// ✅ ПРАВИЛЬНО - типизированный Init
+// ✅ ЛУЧШИЙ ВАРИАНТ - типизированные интерфейсы для каждого контекста
+public sealed class CountdownPresenter : IGameUIInit, IGameUIDispose
+{
+    public void Init(IGameUI entity)  // Явно IGameUI, не IEntity
+    {
+        // Компилятор гарантирует, что это IGameUI
+        _subscription = _gameContext.GetGameTime().Observe(this.OnGameTimeChanged);
+    }
+
+    public void Dispose(IGameUI entity)
+    {
+        _subscription.Dispose();
+    }
+}
+
+// ✅ Другой контекст - другие интерфейсы
+public sealed class StartScreenPresenter : IMenuUIInit, IMenuUIEnable, IMenuUIDisable
+{
+    public void Init(IMenuUI context)  // Явно IMenuUI
+    {
+        _uIContext = context;
+    }
+}
+```
+
+**Legacy Pattern (для простых случаев):**
+
+```csharp
+// ✅ ПРАВИЛЬНО - типизированный Init через дженерик
 public sealed class HitPointsPresenter : IEntityInit<IActor>, IEntityDispose
 {
     public void Init(IActor entity)  // Гарантированно IActor
@@ -923,29 +1236,99 @@ public sealed class HitPointsPresenter : IEntityInit, IEntityDispose
 }
 ```
 
+**Преимущества Typed Interfaces:**
+- Явная типизация на уровне интерфейса
+- Нет необходимости в дженериках
+- Более чистый и понятный код
+- Легче найти все Presenters для конкретного контекста (Find Usages)
+
 ### 5. Composite Pattern
 
 **Правило:** Большие UI разбивайте на Composite + Children.
 
+**Production-Ready Pattern:**
+
 ```csharp
-// ✅ ПРАВИЛЬНО - Composite управляет Children
-public sealed class LevelScreenPresenter : IEntityInit<IMenuUI>, IEntityDispose
+// ✅ ЛУЧШИЙ ВАРИАНТ - Production-ready Composite
+public sealed class LevelScreenPresenter :
+    IMenuUIInit,
+    IMenuUIDispose,
+    IMenuUIEnable,
+    IMenuUIDisable
 {
+    private readonly IAppContext _appContext;
+    private readonly LevelScreenView _screenView;
+    private IMenuUI _uiContext;
+
+    public LevelScreenPresenter(LevelScreenView screenView, IAppContext appContext)
+    {
+        _screenView = screenView;
+        _appContext = appContext;
+    }
+
+    public void Init(IMenuUI context)
+    {
+        _uiContext = context;
+        this.SpawnLevelItems();
+    }
+
     private void SpawnLevelItems()
     {
-        for (int i = 0; i < 10; i++)
+        int startLevel = _appContext.GetStartLevel().Value;
+        int maxLevel = _appContext.GetMaxLevel().Value;
+
+        for (int i = startLevel; i <= maxLevel; i++)
         {
-            var itemPresenter = new LevelItemPresenter(...);
+            LevelItemView itemView = _screenView.CreateItem();
+            LevelItemPresenter itemPresenter = new LevelItemPresenter(
+                _appContext,
+                i,
+                itemView
+            );
             _uiContext.AddBehaviour(itemPresenter);  // Composite создаёт
         }
     }
 
-    public void Dispose(IEntity entity)
+    public void Dispose(IMenuUI entity)
     {
         _uiContext.DelBehaviours<LevelItemPresenter>();  // Composite удаляет
+        _screenView.ClearAllItems();
     }
 }
 
+// Child Presenter - управляется Composite'ом
+public sealed class LevelItemPresenter : IMenuUIInit, IMenuUIDispose
+{
+    private readonly IAppContext _context;
+    private readonly LevelItemView _view;
+    private readonly int _level;
+
+    public LevelItemPresenter(IAppContext context, int level, LevelItemView view)
+    {
+        _context = context;
+        _view = view;
+        _level = level;
+    }
+
+    public void Init(IMenuUI context)
+    {
+        _view.SetLevel(_level.ToString());
+        _view.OnClicked += this.OnClicked;
+    }
+
+    public void Dispose(IMenuUI entity)
+    {
+        _view.OnClicked -= this.OnClicked;
+    }
+
+    private void OnClicked() =>
+        GameLoadingUseCase.StartGame(_context, _level);
+}
+```
+
+**Legacy Pattern:**
+
+```csharp
 // ❌ НЕПРАВИЛЬНО - монолитный Presenter
 public sealed class LevelScreenPresenter : IEntityInit, IEntityDispose
 {
@@ -962,6 +1345,12 @@ public sealed class LevelScreenPresenter : IEntityInit, IEntityDispose
     }
 }
 ```
+
+**Ключевые моменты:**
+- Composite создаёт Child Presenters в `Init()`
+- Composite удаляет Child Presenters через `DelBehaviours<T>()` в `Dispose()`
+- View также очищает визуальные элементы через `ClearAllItems()`
+- Child Presenters получают всё необходимое через конструктор
 
 ### 6. Naming Convention
 
@@ -1074,6 +1463,37 @@ Shooter Demo UI
 
 ### Integration Example
 
+**Production-Ready Pattern с Context Injection:**
+
+```csharp
+public sealed class GameUIInstaller : MonoBehaviour
+{
+    [SerializeField] private TMP_Text _countdownText;
+    [SerializeField] private TMP_Text _blueKillsText;
+    [SerializeField] private TMP_Text _redKillsText;
+
+    private IGameContext _gameContext;
+
+    private void Start()
+    {
+        // Получаем контекст (например, из AppContext или Singleton)
+        _gameContext = AppContext.Instance.GetGameContext();
+
+        var gameUI = new Entity("GameUI");
+
+        // Добавляем Presenters с инжекцией контекста
+        gameUI.AddBehaviour(new CountdownPresenter(_countdownText, _gameContext));
+        gameUI.AddBehaviour(new KillsPresenter(_blueKillsText, _gameContext, TeamType.BLUE));
+        gameUI.AddBehaviour(new KillsPresenter(_redKillsText, _gameContext, TeamType.RED));
+
+        gameUI.Init();
+        gameUI.Enable();
+    }
+}
+```
+
+**Legacy Pattern (для простых случаев):**
+
 ```csharp
 public sealed class GameUIInstaller : MonoBehaviour
 {
@@ -1085,7 +1505,7 @@ public sealed class GameUIInstaller : MonoBehaviour
     {
         var gameUI = new Entity("GameUI");
 
-        // Добавляем Presenters
+        // Presenters используют Singleton внутри
         gameUI.AddBehaviour(new CountdownPresenter(_countdownText));
         gameUI.AddBehaviour(new KillsPresenter(_blueKillsText, TeamType.BLUE));
         gameUI.AddBehaviour(new KillsPresenter(_redKillsText, TeamType.RED));
@@ -1136,11 +1556,13 @@ public sealed class PositionViewBehaviour : IEntityInit<IUnitEntity>, IEntityDis
 **Presenter Pattern** в Atomic Framework обеспечивает:
 
 ✅ **Четкое разделение** между UI (View) и данными (Model)
-✅ **Reusable паттерны** для разных типов UI
-✅ **Type-safe подход** через IEntityInit<TContext>
+✅ **Reusable паттерны** для разных типов UI (7 типов)
+✅ **Type-safe подход** через типизированные интерфейсы (IGameUIInit, IMenuUIInit)
 ✅ **Управляемый lifecycle** через Entity Behaviour interfaces
+✅ **Dependency Injection** - Context injection вместо Singleton
 ✅ **Testability** - Presenters тестируются отдельно от Unity
 ✅ **Scalability** - Composite pattern для сложных UI
+✅ **Memory Safety** - Subscription<T> для автоматической очистки подписок
 
 ### Следующие шаги
 

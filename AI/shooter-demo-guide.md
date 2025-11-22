@@ -3034,3 +3034,888 @@ bullet.GetLifetime().ResetTime();
 ```
 
 ---
+
+## Feature 6: UI System with Presenter Pattern (⭐⭐⭐)
+
+**Сложность:** ⭐⭐⭐ (Advanced)
+**Тип фичи:** UI/Presentation Layer
+**Связанные компоненты:** MenuUI Context, GameUI Context, Presenters, AppContext, GameContext
+
+### Обзор
+
+UI System в Shooter Demo демонстрирует **production-ready Presenter Pattern** с двумя независимыми UI контекстами:
+- **MenuUI**: Навигация по меню (Start Screen, Level Selection Screen)
+- **GameUI**: Игровой интерфейс (Countdown, Kills tracking)
+
+**Ключевые особенности:**
+- ✅ Typed Lifecycle Interfaces (IMenuUIInit, IGameUIInit)
+- ✅ Context Injection вместо Singleton
+- ✅ Subscription<T> для автоматической очистки
+- ✅ 5 типов Presenters (Simple Reactive, Screen, Composite, Child, Entity)
+- ✅ Полное разделение UI логики от Unity
+
+### Архитектура UI System
+
+```
+App Level
+├── MenuUI (Entity - UI Context для меню)
+│   ├── StartScreenPresenter (Screen Presenter)
+│   │   └── Управляет кнопками Start/Select Level/Exit
+│   │
+│   └── LevelScreenPresenter (Composite Presenter)
+│       └── Создает 10x LevelItemPresenter (Child Presenters)
+│
+└── GameUI (Entity - UI Context для игры)
+    ├── CountdownPresenter (Simple Reactive Presenter)
+    │   └── Отображает игровое время
+    │
+    └── KillsPresenter x2 (Dictionary Filtering Presenter)
+        ├── Blue Team Kills
+        └── Red Team Kills
+```
+
+### Шаг 1: Интерфейсы (Typed Lifecycle)
+
+**Классический подход vs Production-Ready:**
+
+```csharp
+// ❌ Классический подход - generic интерфейсы
+public sealed class OldPresenter : IEntityInit<IMenuUI>, IEntityDispose
+{
+    public void Init(IMenuUI entity) { }
+    public void Dispose(IEntity entity) { }
+}
+
+// ✅ Production-Ready - typed интерфейсы для каждого контекста
+public sealed class StartScreenPresenter :
+    IMenuUIInit,      // Вместо IEntityInit<IMenuUI>
+    IMenuUIEnable,    // Вместо IEntityEnable
+    IMenuUIDisable    // Вместо IEntityDisable
+{
+    public void Init(IMenuUI context) { }
+    public void Enable(IMenuUI entity) { }
+    public void Disable(IMenuUI entity) { }
+}
+```
+
+**Определение типизированных интерфейсов:**
+
+```csharp
+// MenuUI Lifecycle Interfaces
+public interface IMenuUIInit : IEntityInit<IMenuUI> { }
+public interface IMenuUIDispose : IEntityDispose { }
+public interface IMenuUIEnable : IEntityEnable { }
+public interface IMenuUIDisable : IEntityDisable { }
+
+// GameUI Lifecycle Interfaces
+public interface IGameUIInit : IEntityInit<IGameUI> { }
+public interface IGameUIDispose : IEntityDispose { }
+public interface IGameUIEnable : IEntityEnable { }
+public interface IGameUIDisable : IEntityDisable { }
+```
+
+**Преимущества:**
+- 🔍 Легко найти все Presenters для конкретного контекста (Find Usages)
+- 📝 Явная типизация без дженериков
+- 🛡️ Компилятор гарантирует правильный контекст
+- 🧹 Более чистый и понятный код
+
+### Шаг 2: Context Injection Pattern
+
+**Legacy Pattern vs Production-Ready:**
+
+```csharp
+// ❌ Legacy - Singleton паттерн
+public sealed class OldPresenter : IGameUIInit, IGameUIDispose
+{
+    private readonly TMP_Text _view;
+
+    public OldPresenter(TMP_Text view)
+    {
+        _view = view;
+    }
+
+    public void Init(IGameUI entity)
+    {
+        // Singleton - скрытая зависимость
+        IGameContext context = GameContext.Instance;
+        var time = context.GetGameTime();
+    }
+}
+
+// ✅ Production-Ready - Constructor Injection
+public sealed class CountdownPresenter : IGameUIInit, IGameUIDispose
+{
+    private readonly TMP_Text _view;
+    private readonly IGameContext _gameContext;  // Injected!
+
+    private Subscription<float> _subscription;
+
+    public CountdownPresenter(TMP_Text view, IGameContext gameContext)
+    {
+        _view = view;
+        _gameContext = gameContext;  // Явная зависимость
+    }
+
+    public void Init(IGameUI entity)
+    {
+        _subscription = _gameContext
+            .GetGameTime()
+            .Observe(this.OnGameTimeChanged);
+    }
+
+    public void Dispose(IGameUI entity)
+    {
+        _subscription.Dispose();
+    }
+
+    private void OnGameTimeChanged(float time)
+    {
+        _view.text = $"Game Time: {time:F0}";
+    }
+}
+```
+
+**Преимущества Context Injection:**
+- ✅ Явные зависимости (видно в конструкторе)
+- ✅ Легко тестировать (можно подменить mock)
+- ✅ Нет скрытой связности
+- ✅ Соответствует SOLID принципам
+
+### Шаг 3: Subscription Pattern
+
+**Manual Unsubscribe vs Subscription<T>:**
+
+```csharp
+// ❌ Manual Unsubscribe - легко забыть
+public sealed class OldPresenter : IGameUIInit, IGameUIDispose
+{
+    private IReactiveValue<float> _time;
+
+    public void Init(IGameUI entity)
+    {
+        _time = GameContext.Instance.GetGameTime();
+        _time.Observe(this.OnTimeChanged);
+    }
+
+    public void Dispose(IGameUI entity)
+    {
+        _time.Unsubscribe(this.OnTimeChanged);  // Легко забыть!
+    }
+}
+
+// ✅ Subscription<T> - автоматическая очистка
+public sealed class CountdownPresenter : IGameUIInit, IGameUIDispose
+{
+    private Subscription<float> _subscription;  // Хранит подписку
+
+    public void Init(IGameUI entity)
+    {
+        _subscription = _gameContext
+            .GetGameTime()
+            .Observe(this.OnGameTimeChanged);
+    }
+
+    public void Dispose(IGameUI entity)
+    {
+        _subscription.Dispose();  // Невозможно забыть
+    }
+}
+```
+
+**Преимущества Subscription<T>:**
+- 🛡️ Невозможно забыть отписаться (compile-time гарантия)
+- 📦 Поддержка множественных подписок (Subscription.Compose)
+- 🧹 Более чистый код
+
+### Шаг 4: MenuUI Context - Навигация по меню
+
+**MenuUI Structure:**
+
+```
+MenuUI (Entity)
+├── StartScreenPresenter (Screen)
+│   ├── OnStartClicked → GameLoadingUseCase.StartGame()
+│   ├── OnSelectLevelClicked → ScreenUseCase.ShowScreen<LevelScreenView>()
+│   └── OnExitClicked → QuitUseCase.Quit()
+│
+└── LevelScreenPresenter (Composite)
+    ├── OnCloseClicked → ScreenUseCase.ShowScreen<StartScreenView>()
+    └── SpawnLevelItems() → Создает 10x LevelItemPresenter
+        └── LevelItemPresenter (Child)
+            └── OnClicked → GameLoadingUseCase.StartGame(level)
+```
+
+**StartScreenPresenter (Screen Presenter):**
+
+```csharp
+public sealed class StartScreenPresenter :
+    IMenuUIInit,
+    IMenuUIEnable,
+    IMenuUIDisable
+{
+    private readonly StartScreenView _screenView;
+    private readonly IAppContext _appContext;  // Context Injection
+
+    private IMenuUI _uIContext;
+
+    public StartScreenPresenter(StartScreenView screenView, IAppContext appContext)
+    {
+        _screenView = screenView;
+        _appContext = appContext;
+    }
+
+    public void Init(IMenuUI context)
+    {
+        _uIContext = context;
+    }
+
+    public void Enable(IMenuUI entity)
+    {
+        _screenView.OnSelectLevelClicked += this.OnSelectLevelClicked;
+        _screenView.OnStartClicked += this.OnStartClicked;
+        _screenView.OnExitClicked += QuitUseCase.Quit;
+    }
+
+    public void Disable(IMenuUI entity)
+    {
+        _screenView.OnStartClicked -= this.OnStartClicked;
+        _screenView.OnSelectLevelClicked -= this.OnSelectLevelClicked;
+        _screenView.OnExitClicked -= QuitUseCase.Quit;
+    }
+
+    private void OnStartClicked() =>
+        GameLoadingUseCase.StartGame(_appContext);
+
+    private void OnSelectLevelClicked() =>
+        ScreenUseCase.ShowScreen<LevelScreenView>(_uIContext);
+}
+```
+
+**LevelScreenPresenter (Composite Presenter):**
+
+```csharp
+public sealed class LevelScreenPresenter :
+    IMenuUIInit,
+    IMenuUIDispose,
+    IMenuUIEnable,
+    IMenuUIDisable
+{
+    private readonly IAppContext _appContext;
+    private readonly LevelScreenView _screenView;
+    private IMenuUI _uiContext;
+
+    public LevelScreenPresenter(LevelScreenView screenView, IAppContext appContext)
+    {
+        _screenView = screenView;
+        _appContext = appContext;
+    }
+
+    public void Init(IMenuUI context)
+    {
+        _uiContext = context;
+        this.SpawnLevelItems();
+    }
+
+    private void SpawnLevelItems()
+    {
+        int startLevel = _appContext.GetStartLevel().Value;
+        int maxLevel = _appContext.GetMaxLevel().Value;
+
+        for (int i = startLevel; i <= maxLevel; i++)
+        {
+            LevelItemView itemView = _screenView.CreateItem();
+            LevelItemPresenter itemPresenter = new LevelItemPresenter(
+                _appContext,
+                i,
+                itemView
+            );
+            _uiContext.AddBehaviour(itemPresenter);  // Composite создаёт Children
+        }
+    }
+
+    public void Enable(IMenuUI entity)
+    {
+        _screenView.OnCloseClicked += this.OnCloseClicked;
+    }
+
+    public void Disable(IMenuUI entity)
+    {
+        _screenView.OnCloseClicked -= this.OnCloseClicked;
+    }
+
+    private void OnCloseClicked() =>
+        ScreenUseCase.ShowScreen<StartScreenView>(_uiContext);
+
+    public void Dispose(IMenuUI entity)
+    {
+        _uiContext.DelBehaviours<LevelItemPresenter>();  // Composite удаляет Children
+        _screenView.ClearAllItems();
+    }
+}
+```
+
+**LevelItemPresenter (Child Presenter):**
+
+```csharp
+public sealed class LevelItemPresenter : IMenuUIInit, IMenuUIDispose
+{
+    private readonly IAppContext _context;
+    private readonly LevelItemView _view;
+    private readonly int _level;
+
+    public LevelItemPresenter(IAppContext context, int level, LevelItemView view)
+    {
+        _context = context;
+        _view = view;
+        _level = level;
+    }
+
+    public void Init(IMenuUI context)
+    {
+        int currentLevel = _context.GetCurrentLevel().Value;
+
+        // Логика визуального состояния
+        if (currentLevel == _level)
+            _view.SetAsCurrent();
+        else if (currentLevel > _level)
+            _view.SetAsCompleted();
+        else
+            _view.SetAsNotCompleted();
+
+        _view.SetLevel(_level.ToString());
+        _view.OnClicked += this.OnClicked;
+    }
+
+    public void Dispose(IMenuUI entity)
+    {
+        _view.OnClicked -= this.OnClicked;
+    }
+
+    private void OnClicked() =>
+        GameLoadingUseCase.StartGame(_context, _level);
+}
+```
+
+### Шаг 5: GameUI Context - Игровой интерфейс
+
+**GameUI Structure:**
+
+```
+GameUI (Entity)
+├── CountdownPresenter (Simple Reactive)
+│   └── Observe: GameContext.GetGameTime()
+│
+├── KillsPresenter (Dictionary Filtering) - Blue Team
+│   └── Observe: GameContext.GetLeaderboard()[TeamType.BLUE]
+│
+└── KillsPresenter (Dictionary Filtering) - Red Team
+    └── Observe: GameContext.GetLeaderboard()[TeamType.RED]
+```
+
+**CountdownPresenter (Simple Reactive Presenter):**
+
+```csharp
+public sealed class CountdownPresenter : IGameUIInit, IGameUIDispose
+{
+    private readonly TMP_Text _view;
+    private readonly IGameContext _gameContext;  // Context Injection
+
+    private Subscription<float> _subscription;   // Subscription Pattern
+
+    public CountdownPresenter(TMP_Text view, IGameContext gameContext)
+    {
+        _view = view;
+        _gameContext = gameContext;
+    }
+
+    public void Init(IGameUI entity)
+    {
+        _subscription = _gameContext
+            .GetGameTime()
+            .Observe(this.OnGameTimeChanged);
+    }
+
+    public void Dispose(IGameUI entity)
+    {
+        _subscription.Dispose();
+    }
+
+    private void OnGameTimeChanged(float time)
+    {
+        _view.text = $"Game Time: {time:F0}";
+    }
+}
+```
+
+**KillsPresenter (Dictionary Filtering Presenter):**
+
+```csharp
+public sealed class KillsPresenter : IGameUIInit, IGameUIDispose
+{
+    private readonly TMP_Text _text;
+    private readonly IGameContext _gameContext;
+    private readonly TeamType _teamType;  // Фильтр
+
+    private IReactiveDictionary<TeamType, int> _leaderboard;
+
+    public KillsPresenter(TMP_Text text, IGameContext gameContext, TeamType teamType)
+    {
+        _text = text;
+        _gameContext = gameContext;
+        _teamType = teamType;
+    }
+
+    public void Init(IGameUI entity)
+    {
+        _leaderboard = _gameContext.GetLeaderboard();
+        _leaderboard.OnItemChanged += this.OnLeaderboardChanged;
+
+        // Initial value
+        this.UpdateText(_leaderboard[_teamType]);
+    }
+
+    public void Dispose(IGameUI entity)
+    {
+        _leaderboard.OnItemChanged -= this.OnLeaderboardChanged;
+    }
+
+    private void OnLeaderboardChanged(TeamType team, int kills)
+    {
+        if (team == _teamType)
+            this.UpdateText(kills);
+    }
+
+    private void UpdateText(int kills)
+    {
+        _text.text = $"Kills: {kills}";
+    }
+}
+```
+
+### Шаг 6: View Classes
+
+**StartScreenView (MonoBehaviour):**
+
+```csharp
+public sealed class StartScreenView : MonoBehaviour
+{
+    [SerializeField] private Button _startButton;
+    [SerializeField] private Button _selectLevelButton;
+    [SerializeField] private Button _exitButton;
+
+    public event Action OnStartClicked
+    {
+        add => _startButton.onClick.AddListener(value.Invoke);
+        remove => _startButton.onClick.RemoveListener(value.Invoke);
+    }
+
+    public event Action OnSelectLevelClicked
+    {
+        add => _selectLevelButton.onClick.AddListener(value.Invoke);
+        remove => _selectLevelButton.onClick.RemoveListener(value.Invoke);
+    }
+
+    public event Action OnExitClicked
+    {
+        add => _exitButton.onClick.AddListener(value.Invoke);
+        remove => _exitButton.onClick.RemoveListener(value.Invoke);
+    }
+}
+```
+
+**LevelScreenView (MonoBehaviour с Factory Method):**
+
+```csharp
+public sealed class LevelScreenView : MonoBehaviour
+{
+    [SerializeField] private LevelItemView _itemPrefab;
+    [SerializeField] private Transform _itemsContainer;
+    [SerializeField] private Button _closeButton;
+
+    public event Action OnCloseClicked
+    {
+        add => _closeButton.onClick.AddListener(value.Invoke);
+        remove => _closeButton.onClick.RemoveListener(value.Invoke);
+    }
+
+    // Factory Method для создания Child Views
+    public LevelItemView CreateItem()
+    {
+        return Instantiate(_itemPrefab, _itemsContainer);
+    }
+
+    public void ClearAllItems()
+    {
+        foreach (Transform child in _itemsContainer)
+            Destroy(child.gameObject);
+    }
+}
+```
+
+**LevelItemView (MonoBehaviour):**
+
+```csharp
+public sealed class LevelItemView : MonoBehaviour
+{
+    [SerializeField] private Button _button;
+    [SerializeField] private TMP_Text _levelText;
+    [SerializeField] private Image _background;
+
+    [SerializeField] private Color _currentColor = Color.yellow;
+    [SerializeField] private Color _completedColor = Color.green;
+    [SerializeField] private Color _notCompletedColor = Color.gray;
+
+    public event Action OnClicked
+    {
+        add => _button.onClick.AddListener(value.Invoke);
+        remove => _button.onClick.RemoveListener(value.Invoke);
+    }
+
+    public void SetLevel(string level)
+    {
+        _levelText.text = level;
+    }
+
+    public void SetAsCurrent()
+    {
+        _background.color = _currentColor;
+        _button.interactable = true;
+    }
+
+    public void SetAsCompleted()
+    {
+        _background.color = _completedColor;
+        _button.interactable = true;
+    }
+
+    public void SetAsNotCompleted()
+    {
+        _background.color = _notCompletedColor;
+        _button.interactable = false;
+    }
+}
+```
+
+### Шаг 7: UseCases для UI Logic
+
+**ScreenUseCase - навигация между экранами:**
+
+```csharp
+public static class ScreenUseCase
+{
+    public static void ShowScreen<TScreenView>(IMenuUI menuContext)
+        where TScreenView : MonoBehaviour
+    {
+        // Скрыть все экраны
+        var allScreens = Object.FindObjectsOfType<MonoBehaviour>()
+            .Where(x => x is StartScreenView || x is LevelScreenView);
+
+        foreach (var screen in allScreens)
+            screen.gameObject.SetActive(false);
+
+        // Показать нужный экран
+        TScreenView targetScreen = Object.FindObjectOfType<TScreenView>();
+        if (targetScreen != null)
+            targetScreen.gameObject.SetActive(true);
+    }
+}
+```
+
+**GameLoadingUseCase - загрузка игры:**
+
+```csharp
+public static class GameLoadingUseCase
+{
+    public static void StartGame(IAppContext appContext)
+    {
+        int currentLevel = appContext.GetCurrentLevel().Value;
+        StartGame(appContext, currentLevel);
+    }
+
+    public static void StartGame(IAppContext appContext, int level)
+    {
+        // Обновить текущий уровень
+        appContext.GetCurrentLevel().Value = level;
+
+        // Запустить загрузку игры
+        ILoadingTask loadingTask = appContext.GetGameLoadingAction();
+        loadingTask.Start();
+    }
+}
+```
+
+**QuitUseCase - выход из приложения:**
+
+```csharp
+public static class QuitUseCase
+{
+    public static void Quit()
+    {
+#if UNITY_EDITOR
+        UnityEditor.EditorApplication.isPlaying = false;
+#else
+        Application.Quit();
+#endif
+    }
+}
+```
+
+### Шаг 8: Integration в AppContext
+
+**MenuUIInstaller:**
+
+```csharp
+public sealed class MenuUIInstaller : MonoBehaviour
+{
+    [SerializeField] private StartScreenView _startScreenView;
+    [SerializeField] private LevelScreenView _levelScreenView;
+
+    private void Awake()
+    {
+        IAppContext appContext = AppContext.Instance;
+
+        // Создать MenuUI Entity
+        var menuUI = new Entity("MenuUI");
+
+        // Добавить Screen Presenters с Context Injection
+        menuUI.AddBehaviour(new StartScreenPresenter(_startScreenView, appContext));
+        menuUI.AddBehaviour(new LevelScreenPresenter(_levelScreenView, appContext));
+
+        // Init и Enable
+        menuUI.Init();
+        menuUI.Enable();
+
+        // Показать стартовый экран
+        ScreenUseCase.ShowScreen<StartScreenView>(menuUI as IMenuUI);
+    }
+}
+```
+
+**GameUIInstaller:**
+
+```csharp
+public sealed class GameUIInstaller : MonoBehaviour
+{
+    [SerializeField] private TMP_Text _countdownText;
+    [SerializeField] private TMP_Text _blueKillsText;
+    [SerializeField] private TMP_Text _redKillsText;
+
+    private void Start()
+    {
+        IGameContext gameContext = GameContext.Instance;
+
+        // Создать GameUI Entity
+        var gameUI = new Entity("GameUI");
+
+        // Добавить Presenters с Context Injection
+        gameUI.AddBehaviour(new CountdownPresenter(_countdownText, gameContext));
+        gameUI.AddBehaviour(new KillsPresenter(_blueKillsText, gameContext, TeamType.BLUE));
+        gameUI.AddBehaviour(new KillsPresenter(_redKillsText, gameContext, TeamType.RED));
+
+        // Init и Enable
+        gameUI.Init();
+        gameUI.Enable();
+    }
+}
+```
+
+### Шаг 9: Best Practices и зависимости
+
+**Зависимости:**
+- 📦 AppContext (для MenuUI Presenters)
+- 📦 GameContext (для GameUI Presenters)
+- 📦 TextMeshPro (для UI текста)
+- 📦 Unity UI (для Button, Image)
+
+**Best Practices:**
+
+1. ✅ **Context Injection вместо Singleton**
+   ```csharp
+   // ПРАВИЛЬНО - явная зависимость
+   public CountdownPresenter(TMP_Text view, IGameContext gameContext)
+   {
+       _gameContext = gameContext;  // Injected
+   }
+
+   // НЕПРАВИЛЬНО - скрытая зависимость
+   public void Init(IGameUI entity)
+   {
+       var context = GameContext.Instance;  // Singleton
+   }
+   ```
+
+2. ✅ **Subscription<T> для подписок**
+   ```csharp
+   // ПРАВИЛЬНО - автоматическая очистка
+   private Subscription<float> _subscription;
+   _subscription.Dispose();
+
+   // НЕПРАВИЛЬНО - легко забыть
+   _value.Observe(OnChanged);
+   _value.Unsubscribe(OnChanged);  // Может забыть
+   ```
+
+3. ✅ **Typed Lifecycle Interfaces**
+   ```csharp
+   // ПРАВИЛЬНО - явная типизация
+   public sealed class Presenter : IGameUIInit, IGameUIDispose
+
+   // НЕПРАВИЛЬНО - generic
+   public sealed class Presenter : IEntityInit<IGameUI>, IEntityDispose
+   ```
+
+4. ✅ **Composite Pattern для сложных UI**
+   ```csharp
+   // ПРАВИЛЬНО - разделение на Composite + Children
+   LevelScreenPresenter (Composite)
+       └── 10x LevelItemPresenter (Children)
+
+   // НЕПРАВИЛЬНО - монолитный Presenter
+   LevelScreenPresenter + 10 Button handlers
+   ```
+
+5. ✅ **View Factory Method для создания Child Views**
+   ```csharp
+   // ПРАВИЛЬНО - View создает Child Views
+   public LevelItemView CreateItem()
+   {
+       return Instantiate(_itemPrefab, _itemsContainer);
+   }
+
+   // НЕПРАВИЛЬНО - Presenter создает GameObject'ы
+   GameObject.Instantiate(prefab);
+   ```
+
+6. ✅ **Initial Value Update после подписки**
+   ```csharp
+   // ПРАВИЛЬНО - показываем начальное значение
+   _leaderboard.OnItemChanged += this.OnLeaderboardChanged;
+   this.UpdateText(_leaderboard[_teamType]);  // Initial value
+
+   // НЕПРАВИЛЬНО - UI пустой до первого события
+   _leaderboard.OnItemChanged += this.OnLeaderboardChanged;
+   ```
+
+7. ✅ **UseCases для UI Logic**
+   ```csharp
+   // ПРАВИЛЬНО - UseCase инкапсулирует логику
+   private void OnStartClicked() =>
+       GameLoadingUseCase.StartGame(_appContext);
+
+   // НЕПРАВИЛЬНО - логика в Presenter
+   private void OnStartClicked()
+   {
+       SceneManager.LoadScene("Game");
+       PlayerPrefs.SetInt("Level", _level);
+   }
+   ```
+
+**Типичные ошибки:**
+
+❌ **Ошибка 1:** Singleton вместо Context Injection
+```csharp
+// НЕПРАВИЛЬНО
+public void Init(IGameUI entity)
+{
+    var context = GameContext.Instance;  // Скрытая зависимость
+}
+```
+
+✅ **Исправление:**
+```csharp
+// ПРАВИЛЬНО
+public CountdownPresenter(TMP_Text view, IGameContext gameContext)
+{
+    _gameContext = gameContext;  // Явная зависимость
+}
+```
+
+❌ **Ошибка 2:** Забыли отписаться (manual Unsubscribe)
+```csharp
+// НЕПРАВИЛЬНО
+public void Init(IGameUI entity)
+{
+    _time.Observe(this.OnTimeChanged);
+}
+
+public void Dispose(IGameUI entity)
+{
+    // Забыли отписаться - memory leak!
+}
+```
+
+✅ **Исправление:**
+```csharp
+// ПРАВИЛЬНО - Subscription<T> невозможно забыть
+private Subscription<float> _subscription;
+
+public void Dispose(IGameUI entity)
+{
+    _subscription.Dispose();  // Compile-time гарантия
+}
+```
+
+❌ **Ошибка 3:** Composite не удаляет Children
+```csharp
+// НЕПРАВИЛЬНО
+public void Dispose(IMenuUI entity)
+{
+    _screenView.ClearAllItems();  // Только визуальная очистка
+}
+```
+
+✅ **Исправление:**
+```csharp
+// ПРАВИЛЬНО
+public void Dispose(IMenuUI entity)
+{
+    _uiContext.DelBehaviours<LevelItemPresenter>();  // Удалить Presenters
+    _screenView.ClearAllItems();                      // Удалить Views
+}
+```
+
+❌ **Ошибка 4:** Не показали initial value
+```csharp
+// НЕПРАВИЛЬНО - UI пустой до первого события
+public void Init(IGameUI entity)
+{
+    _leaderboard.OnItemChanged += this.OnLeaderboardChanged;
+}
+```
+
+✅ **Исправление:**
+```csharp
+// ПРАВИЛЬНО
+public void Init(IGameUI entity)
+{
+    _leaderboard.OnItemChanged += this.OnLeaderboardChanged;
+    this.UpdateText(_leaderboard[_teamType]);  // Показать сразу
+}
+```
+
+### Резюме UI System
+
+**Что мы изучили:**
+
+1. **Typed Lifecycle Interfaces** - IMenuUIInit, IGameUIInit вместо IEntityInit<T>
+2. **Context Injection** - явные зависимости через конструктор
+3. **Subscription Pattern** - автоматическая очистка подписок
+4. **5 типов Presenters**:
+   - Simple Reactive (CountdownPresenter)
+   - Dictionary Filtering (KillsPresenter)
+   - Screen (StartScreenPresenter)
+   - Composite (LevelScreenPresenter)
+   - Child (LevelItemPresenter)
+5. **View Factory Method** - создание Child Views через View класс
+6. **UseCases** - инкапсуляция UI логики
+7. **Composite Pattern** - разделение сложных UI на Composite + Children
+
+**Production-Ready паттерны:**
+- ✅ Явные зависимости (DI)
+- ✅ Автоматическая очистка (Subscription<T>)
+- ✅ Типобезопасность (Typed Interfaces)
+- ✅ Разделение ответственности (Presenter/View/UseCase)
+- ✅ Тестируемость (нет Unity зависимостей в Presenters)
+
+---
