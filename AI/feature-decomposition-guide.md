@@ -1304,6 +1304,132 @@ private void Start()
 ```
 
 ---
+ 
+ ## Advanced Patterns Implementation
+ 
+ Для фич уровня 4 (Architecture) требуются более сложные паттерны. Ниже приведены шаблоны для ключевых архитектурных элементов.
+ 
+ ### Pattern 1: EntityFilter (Dynamic Selections)
+ 
+ Используется для динамической выборки entities по условиям (например, "все враги в радиусе").
+ 
+ **Шаблон:**
+ 
+ ```csharp
+ // 1. Создание фильтра (обычно в Builder или Installer)
+ private EntityFilter<IUnitEntity> CreateFilter(IEntityWorld world, IContext context)
+ {
+     return new EntityFilter<IUnitEntity>(
+         world,
+         entity => IsTargetValid(entity, context), // Предикат
+         new TeamEntityTrigger(),                  // Триггер 1: смена команды
+         new TagEntityTrigger<IUnitEntity>()       // Триггер 2: смена тега
+     );
+ }
+ 
+ // 2. Предикат фильтрации (в UseCase)
+ public static bool IsTargetValid(IUnitEntity entity, IContext context)
+ {
+     return entity.HasUnitTag() &&                 // Проверка тега
+            !entity.HasTargetedTag() &&            // Проверка состояния
+            entity.GetTeam().Value != context.GetTeam().Value; // Проверка данных
+ }
+ 
+ // 3. Использование (в UseCase или Behaviour)
+ public static IUnitEntity FindTarget(EntityFilter<IUnitEntity> filter, Vector3 position)
+ {
+     // Фильтр автоматически содержит только подходящие entities
+     foreach (var entity in filter)
+     {
+         // Поиск ближайшего
+     }
+ }
+ ```
+ 
+ ---
+ 
+ ### Pattern 2: Factory Pattern (Entity Creation)
+ 
+ Используется для создания сложных entities с множеством компонентов.
+ 
+ **Шаблон Factory:**
+ 
+ ```csharp
+ // Абстрактная фабрика
+ public abstract class UnitFactory : ScriptableEntityFactory<IUnitEntity>
+ {
+     public string Name => this.name;
+ 
+     public sealed override IUnitEntity Create()
+     {
+         // 1. Создание entity
+         var entity = new UnitEntity(this.Name);
+         
+         // 2. Установка компонентов (Template Method)
+         this.Install(entity);
+         
+         return entity;
+     }
+ 
+     protected abstract void Install(IUnitEntity entity);
+ }
+ 
+ // Конкретная фабрика
+ [CreateAssetMenu]
+ public sealed class WarriorFactory : UnitFactory
+ {
+     [SerializeField] private MoveInstaller _moveInstaller;
+     [SerializeField] private CombatInstaller _combatInstaller;
+ 
+     protected override void Install(IUnitEntity entity)
+     {
+         // Композиция через Installers
+         entity.Install(_moveInstaller);
+         entity.Install(_combatInstaller);
+         
+         // Дополнительная настройка
+         entity.AddUnitTag();
+     }
+ }
+ ```
+ 
+ ---
+ 
+ ### Pattern 3: Context Integration (Hierarchy)
+ 
+ Используется для связывания дочернего контекста (Player) с родительским (Game).
+ 
+ **Шаблон Installer:**
+ 
+ ```csharp
+ public sealed class PlayerContextInstaller : SceneEntityInstaller<IPlayerContext>
+ {
+     public override void Install(IPlayerContext context)
+     {
+         // 1. Интеграция с родительским контекстом
+         this.InstallGameContext(context);
+ 
+         // 2. Установка локальных систем
+         context.Install(_localSystems);
+     }
+ 
+     private void InstallGameContext(IPlayerContext context)
+     {
+         // Попытка получить родительский контекст
+         if (!GameContext.TryGetInstance(out GameContext gameContext))
+             return;
+ 
+         // Регистрация в родительском контексте
+         if (gameContext.TryGetPlayers(out var players))
+             players.TryAdd(context.GetTeamType().Value, context);
+ 
+         // Связывание жизненного цикла (важно!)
+         gameContext.WhenDisable(context.Disable);
+     }
+ }
+ ```
+ 
+ ---
 
 ## Чеклист для новой фичи
 

@@ -985,5 +985,8 @@ Production-ready архитектура
 2. **Tutorials** в `Docs/Tutorials/`
 3. **API Reference** в `Docs/Entities/` и `Docs/Elements/`
 4. **Demo гайдлайны** в `AI/`
+5. **Feature Guides** (Рекомендуется к прочтению):
+   - [Feature Decomposition Guide](feature-decomposition-guide.md) - пошаговый процесс внедрения
+   - [Feature Checklist](feature-checklist.md) - чеклист для самопроверки
 
 Следуя этому гайду, вы сможете создавать масштабируемые, производительные и легко поддерживаемые игры на Unity с использованием Atomic Framework v2.
