@@ -20,6 +20,7 @@
 - [ ] B. Обрабатывает ввод или выполняет простую логику (движение, сбор)
 - [ ] C. Координирует несколько систем (AI, комбат, спавн)
 - [ ] D. Управляет архитектурой (Factory, Pooling, Context)
+- [ ] E. Отображает UI на основе данных из Context/Entity (Presenter)
 
 #### Вопрос 2: Сколько других фич требуется?
 - [ ] A. 0-1 фича (независима или зависит только от Transform)
@@ -176,9 +177,9 @@
 
 ## Шаг 3: Пошаговая реализация фичи
 
-### ✅ Универсальный чек-лист (7 шагов)
+### ✅ Универсальный чек-лист (8 шагов)
 
-Независимо от уровня сложности, следуйте этим 7 шагам:
+Независимо от уровня сложности, следуйте этим 8 шагам (шаг 6 только для фич с UI):
 
 #### ☐ Шаг 1: Добавление в EntityAPI
 
@@ -397,7 +398,152 @@ public sealed class CharacterInstaller : SceneEntityInstaller<IActor>
 
 ---
 
-#### ☐ Шаг 6: Интеграция с другими фичами
+#### ☐ Шаг 6: Создание Presenters (если фича имеет UI)
+
+**Когда создавать Presenters:**
+- [ ] Фича имеет UI элементы на Canvas (HUD, меню, попапы)
+- [ ] Нужно отображать данные из Context или Entity
+- [ ] UI реагирует на изменения реактивных значений
+- [ ] Нужна обработка UI events (button clicks)
+
+**Когда НЕ создавать Presenters:**
+- ❌ Визуализация игровых объектов в сцене → EntityView Behaviours
+- ❌ Бизнес-логика → UseCases
+- ❌ Хранение состояния → Entity/Context
+
+**Действия:**
+1. [ ] Определить тип Presenter:
+   - [ ] **Simple Reactive** - одно реактивное значение (Score, Time)
+   - [ ] **Dictionary** - IReactiveDictionary с фильтрацией (Leaderboard)
+   - [ ] **Entity Presenter** - состояние Entity (Health Bar)
+   - [ ] **Composite** - коллекция дочерних Presenters (Level List)
+   - [ ] **Screen** - экран с множественными кнопками (Main Menu)
+
+2. [ ] Создать класс Presenter
+3. [ ] Constructor injection для View
+4. [ ] Реализовать lifecycle:
+   - [ ] `IEntityInit<TContext>` - получить данные, подписаться на reactive
+   - [ ] `IEntityEnable` - подписаться на view events
+   - [ ] `IEntityDisable` - отписаться от view events
+   - [ ] `IEntityDispose` - отписаться от reactive values
+
+5. [ ] Установить начальное значение View после подписки
+6. [ ] Использовать UseCases для бизнес-логики
+7. [ ] Для Composite: DelBehaviours<T> в Dispose
+
+**Проверка:**
+- [ ] Симметричная подписка/отписка (Init↔Dispose, Enable↔Disable)
+- [ ] Constructor injection для View
+- [ ] Начальное значение View установлено
+- [ ] Используются UseCases для логики
+- [ ] Memory leaks предотвращены (все отписаны)
+
+**Пример Simple Reactive Presenter:**
+```csharp
+public sealed class ScorePresenter : IEntityInit, IEntityDispose
+{
+    private readonly TMP_Text _text;  // View - через конструктор
+    private IReactiveVariable<int> _score;  // Model - в Init
+
+    public ScorePresenter(TMP_Text text)
+    {
+        _text = text;  // Constructor injection
+    }
+
+    public void Init(IEntity entity)
+    {
+        _score = GameContext.Instance.GetScore();
+        _score.Observe(this.OnScoreChanged);  // Подписка
+        this.OnScoreChanged(_score.Value);    // Начальное значение
+    }
+
+    public void Dispose(IEntity entity)
+    {
+        _score.Unsubscribe(this.OnScoreChanged);  // Отписка
+    }
+
+    private void OnScoreChanged(int score)
+    {
+        _text.text = $"Score: {score}";  // Обновление View
+    }
+}
+```
+
+**Пример Composite Presenter:**
+```csharp
+public sealed class LevelScreenPresenter :
+    IEntityInit<IMenuUI>,
+    IEntityDispose,
+    IEntityEnable,
+    IEntityDisable
+{
+    private readonly LevelScreenView _screenView;
+    private IMenuUI _uiContext;
+
+    public LevelScreenPresenter(LevelScreenView screenView)
+    {
+        _screenView = screenView;
+    }
+
+    public void Init(IMenuUI context)
+    {
+        _uiContext = context;
+
+        // Создаём дочерние Presenters
+        for (int i = 1; i <= 10; i++)
+        {
+            LevelItemView itemView = _screenView.CreateItem();
+            LevelItemPresenter itemPresenter = new LevelItemPresenter(i, itemView);
+            _uiContext.AddBehaviour(itemPresenter);  // Добавляем в UIContext
+        }
+    }
+
+    public void Enable(IEntity entity)
+    {
+        _screenView.OnCloseClicked += this.OnCloseClicked;
+    }
+
+    public void Disable(IEntity entity)
+    {
+        _screenView.OnCloseClicked -= this.OnCloseClicked;
+    }
+
+    public void Dispose(IEntity entity)
+    {
+        _uiContext.DelBehaviours<LevelItemPresenter>();  // Удаляем всех дочерних
+        _screenView.ClearAllItems();
+    }
+
+    private void OnCloseClicked() =>
+        ScreenUseCase.ShowScreen<StartScreenView>(_uiContext);
+}
+```
+
+**Интеграция с UIContext:**
+```csharp
+public sealed class GameUIInstaller : MonoBehaviour
+{
+    [SerializeField] private ScoreView _scoreView;
+
+    private void Start()
+    {
+        var uiContext = new Entity("GameUI");
+
+        // Добавляем Presenter как Behaviour
+        uiContext.AddBehaviour(new ScorePresenter(_scoreView.ScoreText));
+
+        uiContext.Init();
+        uiContext.Enable();
+    }
+}
+```
+
+**Подробнее:**
+См. [presenter-pattern-guide.md](presenter-pattern-guide.md) для полного гайда по всем 7 типам Presenters.
+
+---
+
+#### ☐ Шаг 7: Интеграция с другими фичами
 
 **Действия:**
 1. [ ] Определите, какие фичи зависят от вашей фичи
@@ -450,7 +596,7 @@ if (entity.GetMoveRequest().Consume(out Vector3 dir))
 
 ---
 
-#### ☐ Шаг 7: Best Practices и документация
+#### ☐ Шаг 8: Best Practices и документация
 
 **Действия:**
 1. [ ] Задокументируйте зависимости фичи

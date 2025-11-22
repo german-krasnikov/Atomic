@@ -4,7 +4,7 @@
 
 Этот гайд описывает универсальную методологию декомпозиции и внедрения фич (features) в проектах на Atomic Framework. Применим к любому проекту - от простых прототипов до сложных игр с тысячами entities.
 
-**Ключевая идея:** Каждая фича разбивается на 7 шагов внедрения через **Installers → Behaviours → UseCases**.
+**Ключевая идея:** Каждая фича разбивается на 8 шагов внедрения через **Installers → Behaviours → UseCases → Presenters** (если нужен UI).
 
 ---
 
@@ -50,7 +50,7 @@ Transform (уровень 1) зависит от Movement (уровень 2)
 
 ---
 
-## 7-шаговый процесс внедрения фичи
+## 8-шаговый процесс внедрения фичи
 
 Каждая фича внедряется по единому алгоритму:
 
@@ -535,7 +535,264 @@ public sealed class MainInstaller : SceneEntityInstaller
 
 ---
 
-### Шаг 6: Интеграция с другими фичами
+### Шаг 6: Создание Presenters (если фича имеет UI)
+
+**Когда создавать Presenters:**
+- Фича имеет UI элементы на Canvas (HUD, меню, попапы)
+- Нужно отображать данные из Context или Entity
+- UI реагирует на изменения реактивных значений
+- Нужна обработка UI events (button clicks, etc.)
+
+**Когда НЕ создавать Presenters:**
+- Визуализация игровых объектов в сцене → используйте EntityView Behaviours
+- Бизнес-логика → используйте UseCases
+- Хранение состояния → используйте Entity/Context
+
+**Типы Presenters:**
+
+1. **Simple Reactive Presenter** - для одного реактивного значения
+   ```csharp
+   public sealed class ScorePresenter : IEntityInit, IEntityDispose
+   {
+       private readonly TMP_Text _text;
+       private IReactiveVariable<int> _score;
+
+       public ScorePresenter(TMP_Text text)
+       {
+           _text = text;
+       }
+
+       public void Init(IEntity entity)
+       {
+           _score = GameContext.Instance.GetScore();
+           _score.Observe(this.OnScoreChanged);
+       }
+
+       public void Dispose(IEntity entity)
+       {
+           _score.Unsubscribe(this.OnScoreChanged);
+       }
+
+       private void OnScoreChanged(int score)
+       {
+           _text.text = $"Score: {score}";
+       }
+   }
+   ```
+
+2. **Dictionary Presenter** - для IReactiveDictionary с фильтрацией
+   ```csharp
+   public sealed class KillsPresenter : IEntityInit, IEntityDispose
+   {
+       private readonly TMP_Text _text;
+       private readonly TeamType _teamType;
+       private IReactiveDictionary<TeamType, int> _leaderboard;
+
+       public KillsPresenter(TMP_Text text, TeamType teamType)
+       {
+           _text = text;
+           _teamType = teamType;
+       }
+
+       public void Init(IEntity entity)
+       {
+           _leaderboard = GameContext.Instance.GetLeaderboard();
+           _leaderboard.OnItemChanged += this.OnLeaderboardChanged;
+           this.UpdateText(_leaderboard[_teamType]);  // Начальное значение
+       }
+
+       public void Dispose(IEntity entity)
+       {
+           _leaderboard.OnItemChanged -= this.OnLeaderboardChanged;
+       }
+
+       private void OnLeaderboardChanged(TeamType teamType, int value)
+       {
+           if (_teamType == teamType)  // Фильтрация
+               this.UpdateText(value);
+       }
+
+       private void UpdateText(int value)
+       {
+           _text.text = $"Kills: {value}";
+       }
+   }
+   ```
+
+3. **Entity Presenter** - для отображения состояния Entity
+   ```csharp
+   public sealed class HitPointsPresenter : IEntityInit<IActor>, IEntityEnable, IEntityDisable
+   {
+       private HitPointsView _view;
+       private Health _health;
+
+       public void Init(IActor entity)
+       {
+           _view = entity.GetHitPointsView();
+           _health = entity.GetHealth();
+       }
+
+       public void Enable(IEntity entity)
+       {
+           _health.OnStateChanged += this.OnHealthChanged;
+           _view.Hide();
+       }
+
+       public void Disable(IEntity entity)
+       {
+           _health.OnStateChanged -= this.OnHealthChanged;
+       }
+
+       private void OnHealthChanged()
+       {
+           _view.SetProgress(_health.GetPercent());
+           _view.SetText($"{_health.GetCurrent()}/{_health.GetMax()}");
+           _view.Show();
+       }
+   }
+   ```
+
+4. **Composite Presenter** - управляет коллекцией дочерних Presenters
+   ```csharp
+   public sealed class LevelScreenPresenter :
+       IEntityInit<IMenuUI>,
+       IEntityDispose,
+       IEntityEnable,
+       IEntityDisable
+   {
+       private readonly LevelScreenView _screenView;
+       private IMenuUI _uiContext;
+
+       public LevelScreenPresenter(LevelScreenView screenView)
+       {
+           _screenView = screenView;
+       }
+
+       public void Init(IMenuUI context)
+       {
+           _uiContext = context;
+           this.SpawnLevelItems();  // Создаём дочерние Presenters
+       }
+
+       private void SpawnLevelItems()
+       {
+           for (int i = 1; i <= 10; i++)
+           {
+               LevelItemView itemView = _screenView.CreateItem();
+               LevelItemPresenter itemPresenter = new LevelItemPresenter(i, itemView);
+               _uiContext.AddBehaviour(itemPresenter);  // Добавляем в UIContext
+           }
+       }
+
+       public void Enable(IEntity entity)
+       {
+           _screenView.OnCloseClicked += this.OnCloseClicked;
+       }
+
+       public void Disable(IEntity entity)
+       {
+           _screenView.OnCloseClicked -= this.OnCloseClicked;
+       }
+
+       public void Dispose(IEntity entity)
+       {
+           _uiContext.DelBehaviours<LevelItemPresenter>();  // Удаляем всех
+           _screenView.ClearAllItems();
+       }
+
+       private void OnCloseClicked() =>
+           ScreenUseCase.ShowScreen<StartScreenView>(_uiContext);
+   }
+   ```
+
+5. **Screen Presenter** - для экранов с множественными кнопками
+   ```csharp
+   public sealed class StartScreenPresenter :
+       IEntityInit<IMenuUI>,
+       IEntityEnable,
+       IEntityDisable
+   {
+       private readonly StartScreenView _screenView;
+       private IMenuUI _uIContext;
+
+       public StartScreenPresenter(StartScreenView screenView)
+       {
+           _screenView = screenView;
+       }
+
+       public void Init(IMenuUI context)
+       {
+           _uIContext = context;
+       }
+
+       public void Enable(IEntity entity)
+       {
+           _screenView.OnStartClicked += this.OnStartClicked;
+           _screenView.OnExitClicked += QuitUseCase.Quit;
+       }
+
+       public void Disable(IEntity entity)
+       {
+           _screenView.OnStartClicked -= this.OnStartClicked;
+           _screenView.OnExitClicked -= QuitUseCase.Quit;
+       }
+
+       private void OnStartClicked() =>
+           LoadGameUseCase.StartGame();
+   }
+   ```
+
+**Best Practices для Presenters:**
+
+✅ **DO:**
+- Constructor injection для View и конфигурации
+- Симметричная подписка/отписка (Init/Dispose, Enable/Disable)
+- Использовать UseCases для бизнес-логики
+- Typed Init - IEntityInit<TContext> для типобезопасности
+- Установка начального значения после подписки
+- Разбивать большие UI на Composite + Children
+
+❌ **DON'T:**
+- Бизнес-логика в Presenter (используйте UseCases)
+- Хранить состояние (используйте Context/Entity)
+- Забывать отписываться (memory leaks!)
+- Получать View через Find/GetComponent в Init
+- Создавать монолитные Presenters для больших UI
+
+**Интеграция:**
+
+```csharp
+// View - MonoBehaviour с UI компонентами
+public sealed class ScoreView : MonoBehaviour
+{
+    [SerializeField] private TMP_Text _scoreText;
+    public TMP_Text ScoreText => _scoreText;
+}
+
+// UIContext Installer
+public sealed class GameUIInstaller : MonoBehaviour
+{
+    [SerializeField] private ScoreView _scoreView;
+
+    private void Start()
+    {
+        var uiContext = new Entity("GameUI");
+
+        // Добавляем Presenter как Behaviour
+        uiContext.AddBehaviour(new ScorePresenter(_scoreView.ScoreText));
+
+        uiContext.Init();
+        uiContext.Enable();
+    }
+}
+```
+
+**Подробнее:**
+См. [presenter-pattern-guide.md](presenter-pattern-guide.md) для полного гайда по всем 7 типам Presenters.
+
+---
+
+### Шаг 7: Интеграция с другими фичами
 
 **Что делать:**
 - Описать как фича взаимодействует с другими
@@ -603,7 +860,7 @@ if (entity.GetRequest().Consume(out var data))
 
 ---
 
-### Шаг 7: Указание зависимостей и Best Practices
+### Шаг 8: Указание зависимостей и Best Practices
 
 **Что делать:**
 - Перечислить все зависимости фичи
@@ -1467,13 +1724,21 @@ private void Start()
   - [ ] Правильный порядок: данные → behaviours
   - [ ] XML комментарии
 
-- [ ] **Шаг 6: Интеграция**
+- [ ] **Шаг 6: Presenters (если нужен UI)**
+  - [ ] Определен тип Presenter (Simple/Dictionary/Entity/Composite/Screen)
+  - [ ] Constructor injection для View
+  - [ ] Typed Init - IEntityInit<TContext>
+  - [ ] Симметричная подписка/отписка
+  - [ ] Установка начального значения View
+  - [ ] UseCases для бизнес-логики
+
+- [ ] **Шаг 7: Интеграция**
   - [ ] Описан data flow
   - [ ] Указаны используемые фичи
   - [ ] Указаны события
   - [ ] Есть примеры интеграции с UI
 
-- [ ] **Шаг 7: Документация**
+- [ ] **Шаг 8: Документация**
   - [ ] Перечислены зависимости
   - [ ] Описаны Best Practices
   - [ ] Примеры правильного/неправильного кода
@@ -1492,9 +1757,9 @@ private void Start()
 Этот гайд предоставляет универсальную методологию для декомпозиции и внедрения любой фичи в Atomic Framework.
 
 **Ключевые принципы:**
-1. **7 шагов** - единый процесс для всех фич
+1. **8 шагов** - единый процесс для всех фич (включая Presenters для UI)
 2. **4 уровня сложности** - от простого к сложному
-3. **Разделение ответственности** - Installers/Behaviours/UseCases
+3. **Разделение ответственности** - Installers/Behaviours/UseCases/Presenters
 4. **Type Safety** - EntityAPI, Tags, Enums
 5. **Performance** - кеширование, Burst, ReactiveVariables
 
