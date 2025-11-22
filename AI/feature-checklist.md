@@ -1152,8 +1152,8 @@ IUnitEntity warrior = UnitsUseCase.Spawn(context, "Warrior", pos, rot, TeamType.
 - `shooter-demo-guide.md` - для фич уровня ⭐⭐ и ⭐⭐⭐
 - `rts-demo-guide.md` - для фич уровня ⭐⭐⭐ и ⭐⭐⭐⭐
 - `feature-decomposition-guide.md` - универсальный справочник паттернов
-- `atomic-guide-v1.md` - основы фреймворка
-- `atomic-guide-v2.md` - продвинутые концепции
+- `atomic-guide-v2.md` - полное руководство по Atomic Framework (от основ до продвинутых концепций)
+- `presenter-pattern-guide.md` - руководство по паттерну Presenter для UI
 
 ---
 

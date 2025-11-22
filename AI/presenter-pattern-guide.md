@@ -1573,12 +1573,21 @@ public sealed class PositionViewBehaviour : IEntityInit<IUnitEntity>, IEntityDis
 
 ---
 
-## Дополнительные ресурсы
+## 📖 Дополнительные ресурсы
 
-- [beginner-demo-guide.md](beginner-demo-guide.md) - простые примеры UI
-- [shooter-demo-guide.md](shooter-demo-guide.md) - полная UI система
-- [feature-decomposition-guide.md](feature-decomposition-guide.md) - общий процесс добавления фич
-- [feature-checklist.md](feature-checklist.md) - чеклист с Presenter шагом
+**Связанные гайды:**
+
+1. **Практические примеры:**
+   - [`beginner-demo-guide.md`](beginner-demo-guide.md) - простые примеры UI Presenters
+   - [`shooter-demo-guide.md`](shooter-demo-guide.md) - полная UI система с 7 типами Presenters
+
+2. **Справочные материалы:**
+   - [`atomic-guide-v2.md`](atomic-guide-v2.md) - полное руководство по Atomic Framework
+   - [`feature-decomposition-guide.md`](feature-decomposition-guide.md) - универсальный процесс добавления фич
+   - [`feature-checklist.md`](feature-checklist.md) - чеклист с шагом для Presenters
+
+3. **Продвинутые темы:**
+   - [`rts-demo-guide.md`](rts-demo-guide.md) - масштабирование и производительность
 
 ---
 
